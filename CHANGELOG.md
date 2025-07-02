@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial release preparation
 - Comprehensive documentation updates
 
+## [0.1.1] - 2024-07-02
+### Fixed
+- Corrected GitHub repository URLs in package metadata
+- Fixed TOML syntax for PyPI compatibility 
+- Improved package description and links
+
 ## [0.1.0] - 2024-07-01
 
 ### Added
