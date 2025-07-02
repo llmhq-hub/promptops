@@ -33,15 +33,16 @@ classifiers = [
   "Topic :: Software Development :: Libraries :: Python Modules",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
   "Topic :: Software Development :: Version Control :: Git",
+  "Topic :: Software Development :: Prompt Versioning,
   "Topic :: Software Development :: Testing",
   "Topic :: Text Processing :: Linguistic"
 ]
 urls = { 
-  "Homepage" = "https://github.com/llmhq-hub/llmhq-promptops", 
-  "Documentation" = "https://github.com/llmhq-hub/llmhq-promptops",
-  "Repository" = "https://github.com/llmhq-hub/llmhq-promptops",
-  "Issues" = "https://github.com/llmhq-hub/llmhq-promptops/issues",
-  "Changelog" = "https://github.com/llmhq-hub/llmhq-promptops/blob/main/CHANGELOG.md"
+  "Homepage" = "https://github.com/llmhq-hub/promptops", 
+  "Documentation" = "https://github.com/llmhq-hub/promptops",
+  "Repository" = "https://github.com/llmhq-hub/promptops",
+  "Issues" = "https://github.com/llmhq-hub/promptops/issues",
+  "Changelog" = "https://github.com/llmhq-hub/promptops/blob/main/CHANGELOG.md"
 }
 
 dependencies = [
