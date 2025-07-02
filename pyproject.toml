@@ -33,17 +33,9 @@ classifiers = [
   "Topic :: Software Development :: Libraries :: Python Modules",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
   "Topic :: Software Development :: Version Control :: Git",
-  "Topic :: Software Development :: Prompt Versioning",
   "Topic :: Software Development :: Testing",
   "Topic :: Text Processing :: Linguistic"
 ]
-urls = { 
-  "Homepage" = "https://github.com/llmhq-hub/promptops", 
-  "Documentation" = "https://github.com/llmhq-hub/promptops",
-  "Repository" = "https://github.com/llmhq-hub/promptops",
-  "Issues" = "https://github.com/llmhq-hub/promptops/issues",
-  "Changelog" = "https://github.com/llmhq-hub/promptops/blob/main/CHANGELOG.md"
-}
 
 dependencies = [
   "click>=8.1.8",
@@ -63,6 +55,13 @@ dev = [
   "mypy>=1.0.0",
   "pre-commit>=3.0.0"
 ]
+
+[project.urls]
+Homepage = "https://github.com/llmhq-hub/promptops"
+Documentation = "https://github.com/llmhq-hub/promptops"
+Repository = "https://github.com/llmhq-hub/promptops"
+Issues = "https://github.com/llmhq-hub/promptops/issues"
+Changelog = "https://github.com/llmhq-hub/promptops/blob/main/CHANGELOG.md"
 
 [project.scripts]
 promptops = "src.cli.main:app"
