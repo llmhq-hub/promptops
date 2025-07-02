@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llmhq-promptops"
+version = "0.1.0"
+description = "Comprehensive prompt management and testing framework for production LLM workflows with automated git versioning"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [
+  { name = "jision", email = "jisionpc@gmail.com" }
+]
+maintainers = [
+  { name = "jision", email = "jisionpc@gmail.com" }
+]
+keywords = [
+  "llm", "prompt", "versioning", "testing", "git", "automation", 
+  "cli", "sdk", "production", "workflow", "template", "jinja2"
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Software Development :: Version Control :: Git",
+  "Topic :: Software Development :: Testing",
+  "Topic :: Text Processing :: Linguistic"
+]
+urls = { 
+  "Homepage" = "https://github.com/llmhq-hub/llmhq-promptops", 
+  "Documentation" = "https://github.com/llmhq-hub/llmhq-promptops",
+  "Repository" = "https://github.com/llmhq-hub/llmhq-promptops",
+  "Issues" = "https://github.com/llmhq-hub/llmhq-promptops/issues",
+  "Changelog" = "https://github.com/llmhq-hub/llmhq-promptops/blob/main/CHANGELOG.md"
+}
+
+dependencies = [
+  "click>=8.1.8",
+  "Jinja2>=3.1.6",
+  "PyYAML>=6.0.2",
+  "typer>=0.15.2",
+  "GitPython>=3.1.0",
+  "typing_extensions>=4.13.1"
+]
+
+[project.optional-dependencies]
+# Optional extras for development and future integrations
+dev = [
+  "pytest>=7.0.0", 
+  "black>=22.0.0", 
+  "flake8>=4.0.0",
+  "mypy>=1.0.0",
+  "pre-commit>=3.0.0"
+]
+
+[project.scripts]
+promptops = "src.cli.main:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]

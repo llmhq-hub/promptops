@@ -1,0 +1,32 @@
+Metadata-Version: 2.4
+Name: llmhq-promptops
+Version: 0.1.0
+Summary: CLI tool for managing LLM prompt versioning and testing
+Author-email: jision <jisionpc@gmail.com>
+License: MIT
+Project-URL: Homepage, https://github.com/llmhq-hub/llmhq-promptops
+Requires-Python: >=3.7
+Description-Content-Type: text/markdown
+Requires-Dist: click>=8.1.8
+Requires-Dist: Jinja2>=3.1.6
+Requires-Dist: markdown-it-py==3.0.0
+Requires-Dist: MarkupSafe==3.0.2
+Requires-Dist: mdurl==0.1.2
+Requires-Dist: Pygments==2.19.1
+Requires-Dist: python-dotenv==1.1.0
+Requires-Dist: PyYAML==6.0.2
+Requires-Dist: rich==14.0.0
+Requires-Dist: shellingham==1.5.4
+Requires-Dist: typer==0.15.2
+Requires-Dist: typing_extensions==4.13.1
+Requires-Dist: GitPython>=3.1.0
+Requires-Dist: langchain>=0.1.0
+Requires-Dist: langchain-core>=0.1.0
+Requires-Dist: openai>=1.0.0
+Requires-Dist: anthropic>=0.20.0
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0.0; extra == "dev"
+Requires-Dist: black>=22.0.0; extra == "dev"
+Requires-Dist: flake8>=4.0.0; extra == "dev"
+Provides-Extra: requests
+Requires-Dist: requests>=2.25.0; extra == "requests"
