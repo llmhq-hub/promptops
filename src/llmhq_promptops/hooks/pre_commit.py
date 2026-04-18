@@ -104,8 +104,9 @@ class PreCommitHook:
             # Filter for prompt files
             all_staged = result.stdout.strip().split('\n') if result.stdout.strip() else []
             prompt_files = [
-                f for f in all_staged 
+                f for f in all_staged
                 if f.startswith('.promptops/prompts/') and f.endswith('.yaml')
+                and not Path(f).name.startswith('-')
             ]
             
             return prompt_files
@@ -178,7 +179,7 @@ class PreCommitHook:
         """Get file content from HEAD commit."""
         try:
             result = subprocess.run(
-                ["git", "show", f"HEAD:{file_path}"],
+                ["git", "show", "--", f"HEAD:{file_path}"],
                 cwd=self.repo_path,
                 capture_output=True,
                 text=True,
@@ -188,12 +189,12 @@ class PreCommitHook:
         except subprocess.CalledProcessError:
             # File doesn't exist in HEAD (new file)
             return None
-    
+
     def _get_staged_content(self, file_path: str) -> Optional[str]:
         """Get file content from git index (staged)."""
         try:
             result = subprocess.run(
-                ["git", "show", f":{file_path}"],
+                ["git", "show", "--", f":{file_path}"],
                 cwd=self.repo_path,
                 capture_output=True,
                 text=True,
@@ -250,9 +251,26 @@ class PreCommitHook:
             return None
     
     def _write_file(self, file_path: str, content: str):
-        """Write content to file."""
+        """Write content to file atomically."""
+        import tempfile
         full_path = self.repo_path / file_path
-        full_path.write_text(content)
+        # Write to temp file then atomically replace
+        fd, tmp_path = tempfile.mkstemp(
+            dir=full_path.parent, suffix='.tmp', prefix='.promptops_'
+        )
+        try:
+            with os.fdopen(fd, 'w') as tmp_f:
+                tmp_f.write(content)
+                tmp_f.flush()
+                os.fsync(tmp_f.fileno())
+            os.replace(tmp_path, full_path)
+        except Exception:
+            # Clean up temp file on failure
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
     
     def _validate_prompt_syntax(self, content: str) -> bool:
         """Validate prompt YAML syntax and structure."""

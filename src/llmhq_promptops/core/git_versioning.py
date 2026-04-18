@@ -5,6 +5,8 @@ from pathlib import Path
 from git import Repo, InvalidGitRepositoryError
 from datetime import datetime
 
+from .validation import validate_prompt_id, check_file_size
+
 
 class GitVersioning:
     """Handles git-based versioning for prompt files."""
@@ -28,6 +30,7 @@ class GitVersioning:
     
     def get_prompt_versions(self, prompt_id: str) -> List[Dict]:
         """Get all versions of a prompt from git history."""
+        validate_prompt_id(prompt_id)
         prompt_file = f".promptops/prompts/{prompt_id}.yaml"
         
         # Check cache first
@@ -66,6 +69,7 @@ class GitVersioning:
     
     def get_prompt_at_version(self, prompt_id: str, version: Optional[str] = None) -> Optional[str]:
         """Get prompt file content at specific version."""
+        validate_prompt_id(prompt_id)
         prompt_file = f".promptops/prompts/{prompt_id}.yaml"
         
         # Handle special version references
@@ -162,8 +166,9 @@ class GitVersioning:
         """Get prompt content from working directory (uncommitted changes)."""
         prompt_file = f".promptops/prompts/{prompt_id}.yaml"
         file_path = self.repo_path / prompt_file
-        
+
         if file_path.exists():
+            check_file_size(file_path)
             return file_path.read_text()
         return None
     
@@ -213,6 +218,7 @@ class GitVersioning:
     
     def has_uncommitted_changes(self, prompt_id: str) -> bool:
         """Check if prompt has uncommitted changes."""
+        validate_prompt_id(prompt_id)
         unstaged_content = self._get_unstaged_prompt(prompt_id)
         latest_content = self._get_latest_commit_prompt(prompt_id)
         
@@ -226,6 +232,7 @@ class GitVersioning:
     
     def get_file_status(self, prompt_id: str) -> Dict[str, bool]:
         """Get detailed file status information."""
+        validate_prompt_id(prompt_id)
         prompt_file = f".promptops/prompts/{prompt_id}.yaml"
         
         status = {

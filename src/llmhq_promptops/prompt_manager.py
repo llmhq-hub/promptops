@@ -6,6 +6,7 @@ from functools import lru_cache
 
 from .core.git_versioning import GitVersioning
 from .core.template import PromptTemplate
+from .core.validation import validate_prompt_id
 
 
 class PromptManager:
@@ -99,18 +100,22 @@ class PromptManager:
     
     def _parse_prompt_reference(self, reference: str) -> tuple[str, Optional[str]]:
         """Parse prompt reference into ID and version.
-        
+
         Args:
             reference: Either 'prompt_id' or 'prompt_id:version'
-            
+
         Returns:
             Tuple of (prompt_id, version)
         """
         if ":" in reference:
             prompt_id, version = reference.split(":", 1)
-            return prompt_id.strip(), version.strip()
+            prompt_id = prompt_id.strip()
+            version = version.strip()
         else:
-            return reference.strip(), None
+            prompt_id = reference.strip()
+            version = None
+        validate_prompt_id(prompt_id)
+        return prompt_id, version
     
     def list_prompts(self) -> List[str]:
         """List all available prompt IDs."""

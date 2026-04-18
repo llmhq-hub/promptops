@@ -1,9 +1,14 @@
 # cli/commands/render.py
 import typer
 import yaml
-from jinja2 import Template
+from pathlib import Path
+from jinja2.sandbox import SandboxedEnvironment
+
+from llmhq_promptops.core.validation import sanitize_path
 
 app = typer.Typer()
+
+_sandbox_env = SandboxedEnvironment()
 
 @app.command()
 def prompt(
@@ -13,17 +18,29 @@ def prompt(
     """
     Render a prompt with provided variables.
     """
-    with open(prompt_file, "r") as f:
+    # Validate file paths are within current working directory
+    try:
+        safe_prompt = sanitize_path(Path(prompt_file), Path.cwd())
+    except ValueError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+    with open(safe_prompt, "r") as f:
         prompt_data = yaml.safe_load(f)
 
     template_str = prompt_data["prompt"]["template"]
 
     variables = {}
     if vars_file:
-        with open(vars_file, "r") as vf:
+        try:
+            safe_vars = sanitize_path(Path(vars_file), Path.cwd())
+        except ValueError as e:
+            typer.echo(f"Error: {e}", err=True)
+            raise typer.Exit(1)
+        with open(safe_vars, "r") as vf:
             variables = yaml.safe_load(vf)
 
-    template = Template(template_str)
+    template = _sandbox_env.from_string(template_str)
     rendered_prompt = template.render(**variables)
 
     typer.echo(rendered_prompt)

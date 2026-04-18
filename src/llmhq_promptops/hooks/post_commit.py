@@ -96,8 +96,9 @@ class PostCommitHook:
             # Filter for prompt files
             all_changed = result.stdout.strip().split('\n') if result.stdout.strip() else []
             prompt_files = [
-                f for f in all_changed 
+                f for f in all_changed
                 if f.startswith('.promptops/prompts/') and f.endswith('.yaml')
+                and not Path(f).name.startswith('-')
             ]
             
             return prompt_files
@@ -125,7 +126,7 @@ class PostCommitHook:
                     
                     if not tag_exists:
                         subprocess.run(
-                            ["git", "tag", tag_name, "-m", f"Version {version} of {prompt_id}"],
+                            ["git", "tag", "-m", f"Version {version} of {prompt_id}", "--", tag_name],
                             cwd=self.repo_path,
                             check=True
                         )
@@ -267,7 +268,7 @@ class PostCommitHook:
         try:
             # Get previous version of file
             prev_content = subprocess.run(
-                ["git", "show", f"HEAD~1:{prompt_file}"],
+                ["git", "show", "--", f"HEAD~1:{prompt_file}"],
                 capture_output=True,
                 text=True,
                 cwd=self.repo_path

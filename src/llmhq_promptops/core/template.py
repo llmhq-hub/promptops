@@ -1,7 +1,8 @@
 import yaml
 from typing import Dict, Any, Optional, List
 from pathlib import Path
-from jinja2 import Template, Environment, meta
+from jinja2 import Environment, meta
+from jinja2.sandbox import SandboxedEnvironment
 from dataclasses import dataclass
 
 
@@ -39,7 +40,7 @@ class PromptTemplate:
         self.raw_content = yaml_content
         self._data = yaml.safe_load(yaml_content)
         self._template = None
-        self._jinja_env = Environment()
+        self._jinja_env = SandboxedEnvironment()
         
         # Parse the structure
         self.metadata = self._parse_metadata()
@@ -142,11 +143,11 @@ class PromptTemplate:
             return self._data["tests"]
         return []
     
-    @property 
-    def template(self) -> Template:
-        """Get Jinja2 template instance."""
+    @property
+    def template(self):
+        """Get Jinja2 template instance (sandboxed)."""
         if self._template is None:
-            self._template = Template(self.template_str)
+            self._template = self._jinja_env.from_string(self.template_str)
         return self._template
     
     def render(self, variables: Dict[str, Any] = None) -> str:

@@ -7,15 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-- Initial release preparation
-- Comprehensive documentation updates
+## [0.2.0] - 2026-04-18
 
-## [0.1.1] - 2024-07-02
-### Fixed
-- Corrected GitHub repository URLs in package metadata
-- Fixed TOML syntax for PyPI compatibility 
-- Improved package description and links
+### Security
+- Fixed Jinja2 Server-Side Template Injection (SSTI) — replaced `Environment` with `SandboxedEnvironment` to block class traversal attacks
+- Fixed path traversal via unsanitized `prompt_id` in SDK and CLI — added strict input validation (`[a-zA-Z0-9][a-zA-Z0-9_-]*`)
+- Fixed arbitrary code execution via `exec()` in hook test validation — replaced with `ast.parse()` syntax checking
+- Fixed git argument injection via filenames starting with `--` — added `--` separators to git subprocess calls
+- Fixed non-atomic file writes in pre-commit hook — now uses temp file + `os.replace()`
+- Fixed TOCTOU race condition in hook installation backup
+
+### Added
+- Input validation module (`core/validation.py`) with `validate_prompt_id`, `validate_version`, `sanitize_path`, `check_file_size`
+- 35 security regression tests (`tests/test_security.py`)
+
+### Changed
+- CLI `render` and `create` commands now validate file paths are within the working directory
+- File reads now enforce a 1MB size limit to prevent memory exhaustion
 
 ## [0.1.0] - 2024-07-01
 
@@ -98,7 +106,7 @@ pip install llmhq-promptops
 
 For development:
 ```bash
-git clone https://github.com/your-org/llmhq-promptops.git
+git clone https://github.com/llmhq-hub/promptops.git
 cd llmhq-promptops
 pip install -e .
 ```

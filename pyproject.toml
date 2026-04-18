@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "llmhq-promptops"
-version = "0.1.1"
+version = "0.2.0"
 description = "Comprehensive prompt management and testing framework for production LLM workflows with automated git versioning"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -16,7 +16,7 @@ maintainers = [
   { name = "jision", email = "jisionpc@gmail.com" }
 ]
 keywords = [
-  "llm", "prompt", "versioning", "testing", "git", "automation", 
+  "llm", "prompt", "versioning", "testing", "git", "automation",
   "cli", "sdk", "production", "workflow", "template", "jinja2"
 ]
 classifiers = [
@@ -36,7 +36,6 @@ classifiers = [
   "Topic :: Software Development :: Testing",
   "Topic :: Text Processing :: Linguistic"
 ]
-
 dependencies = [
   "click>=8.1.8",
   "Jinja2>=3.1.6",
@@ -46,25 +45,24 @@ dependencies = [
   "typing_extensions>=4.13.1"
 ]
 
+[project.urls]
+Homepage = "https://github.com/llmhq-hub/llmhq-promptops"
+Documentation = "https://github.com/llmhq-hub/llmhq-promptops"
+Repository = "https://github.com/llmhq-hub/llmhq-promptops"
+Issues = "https://github.com/llmhq-hub/llmhq-promptops/issues"
+Changelog = "https://github.com/llmhq-hub/llmhq-promptops/blob/main/CHANGELOG.md"
+
 [project.optional-dependencies]
-# Optional extras for development and future integrations
 dev = [
-  "pytest>=7.0.0", 
-  "black>=22.0.0", 
+  "pytest>=7.0.0",
+  "black>=22.0.0",
   "flake8>=4.0.0",
   "mypy>=1.0.0",
   "pre-commit>=3.0.0"
 ]
 
-[project.urls]
-Homepage = "https://github.com/llmhq-hub/promptops"
-Documentation = "https://github.com/llmhq-hub/promptops"
-Repository = "https://github.com/llmhq-hub/promptops"
-Issues = "https://github.com/llmhq-hub/promptops/issues"
-Changelog = "https://github.com/llmhq-hub/promptops/blob/main/CHANGELOG.md"
-
 [project.scripts]
-promptops = "src.cli.main:app"
+promptops = "cli.main:app"
 
 [tool.setuptools.packages.find]
 where = ["src"]

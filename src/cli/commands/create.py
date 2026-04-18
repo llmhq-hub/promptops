@@ -3,6 +3,8 @@ import typer
 import yaml
 from pathlib import Path
 
+from llmhq_promptops.core.validation import validate_prompt_id, sanitize_path
+
 app = typer.Typer()
 
 @app.command()
@@ -15,7 +17,20 @@ def prompt(
     """
     Create a new prompt template from a Jinja2 file.
     """
-    with open(template_file, "r") as tf:
+    try:
+        validate_prompt_id(prompt_id)
+    except ValueError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+    # Validate template_file path is within current working directory
+    try:
+        safe_template = sanitize_path(Path(template_file), Path.cwd())
+    except ValueError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+    with open(safe_template, "r") as tf:
         template_content = tf.read()
 
     prompt_structure = {

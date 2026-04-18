@@ -183,10 +183,13 @@ def _install_pre_commit_hook(hooks_dir: Path):
     hook_file = hooks_dir / "pre-commit"
     
     # Check if hook already exists
-    if hook_file.exists() and not _is_promptops_hook(hook_file):
-        backup_file = hooks_dir / "pre-commit.backup"
-        hook_file.rename(backup_file)
-        typer.echo(f"📦 Backed up existing pre-commit hook to {backup_file}")
+    try:
+        if hook_file.exists() and not _is_promptops_hook(hook_file):
+            backup_file = hooks_dir / "pre-commit.backup"
+            hook_file.rename(backup_file)
+            typer.echo(f"📦 Backed up existing pre-commit hook to {backup_file}")
+    except FileNotFoundError:
+        pass  # File was removed between check and rename
     
     # Create hook script with robust error handling
     hook_content = f"""#!/usr/bin/env python3
@@ -287,10 +290,13 @@ def _install_post_commit_hook(hooks_dir: Path):
     hook_file = hooks_dir / "post-commit"
     
     # Check if hook already exists
-    if hook_file.exists() and not _is_promptops_hook(hook_file):
-        backup_file = hooks_dir / "post-commit.backup"
-        hook_file.rename(backup_file)
-        typer.echo(f"📦 Backed up existing post-commit hook to {backup_file}")
+    try:
+        if hook_file.exists() and not _is_promptops_hook(hook_file):
+            backup_file = hooks_dir / "post-commit.backup"
+            hook_file.rename(backup_file)
+            typer.echo(f"📦 Backed up existing post-commit hook to {backup_file}")
+    except FileNotFoundError:
+        pass  # File was removed between check and rename
     
     # Create hook script with same robust error handling as pre-commit
     hook_content = f"""#!/usr/bin/env python3
@@ -389,16 +395,13 @@ def _is_promptops_hook(hook_file: Path) -> bool:
 def _test_hook_installation(hook_file: Path) -> bool:
     """Test if a hook can be executed successfully."""
     try:
-        # Test basic execution (dry run)
-        result = subprocess.run(
-            ["python3", "-c", f"exec(open('{hook_file}').read().split('find_promptops()')[0] + 'find_promptops()')"],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-        
-        # If it doesn't crash finding promptops, it's probably OK
-        return result.returncode == 0 or "PromptOps installation not found" in result.stderr
-        
+        import ast
+        # Validate the hook is syntactically valid Python
+        content = hook_file.read_text()
+        ast.parse(content)
+        # Check it contains the expected PromptOps markers
+        return "PromptOps" in content and "find_promptops" in content
+    except SyntaxError:
+        return False
     except Exception:
-        return False  # Assume it's broken if we can't test it
+        return False
