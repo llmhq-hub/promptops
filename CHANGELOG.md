@@ -16,8 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - `PromptManager._validate_setup` no longer checks for git directly. Git presence validation now lives in `GitResolver.__init__`. This allows future resolvers (e.g., `SnapshotResolver` in M3) to validate their own backends, enabling production usage in Docker images without `.git/`.
 
+### Fixed (Phase 1.5a — M2: Stable version identifiers)
+- `GitVersioning._generate_version` no longer fabricates a position-based semver (`v1.0.0`, `v1.0.1`, …) for untagged commits. The previous fallback derived the version from a commit's index in `iter_commits` output, so the same commit's "version" would shift every time a new commit landed — directly breaking incident archaeology (`promptops blame --at <timestamp>`).
+- Untagged commits now return a stable, immutable identifier of the form `commit-<8charsha>`. Tagged-commit behavior is unchanged. Lookup by short SHA continues to work, and lookup by the new `commit-<sha>` form also works.
+
 ### Tests
 - New `tests/test_resolver.py` with 26 tests covering ResolvedPrompt roundtrip, Resolver Protocol structural typing, GitResolver constructor + all version references, PromptManager resolver injection, and backwards compatibility.
+- New `tests/test_git_versioning.py` with 7 tests covering the M2 fix: commit-reference format, version immutability across new commits, tagged-commit precedence, and commit-reference roundtrip through `get_prompt_at_version`.
 
 ## [0.2.0] - 2026-04-18
 

@@ -109,19 +109,27 @@ class GitVersioning:
         return None
     
     def _generate_version(self, commit, index: int, total: int) -> str:
-        """Generate semantic version number for a commit."""
-        # Try to extract version from commit message or tags
+        """Resolve a commit to its version identifier.
+
+        Returns the git tag (e.g. ``v1.2.3``) when the commit is tagged.
+        Otherwise returns a commit reference (e.g. ``commit-abc12345``).
+
+        The commit reference is an immutable identifier — the same commit
+        always returns the same string regardless of how many commits land
+        afterwards. This replaces an earlier position-based fallback
+        (``v{major}.{minor}.{patch}`` derived from index/total) that
+        violated immutability: a commit's "version" would shift every
+        time a new commit was added, which made historical references
+        unreliable for ``promptops blame``-style use cases.
+
+        ``index`` and ``total`` are kept in the signature for backwards
+        compatibility with the call site, but are no longer used.
+        """
         tag_version = self._get_tag_version(commit)
         if tag_version:
             return tag_version
-        
-        # Auto-generate semantic version based on position
-        # Latest commit gets highest version
-        major = 1 + (total - index - 1) // 100  # Increment major every 100 commits
-        minor = ((total - index - 1) % 100) // 10  # Increment minor every 10 commits  
-        patch = (total - index - 1) % 10  # Increment patch every commit
-        
-        return f"v{major}.{minor}.{patch}"
+
+        return f"commit-{commit.hexsha[:8]}"
     
     def _get_tag_version(self, commit) -> Optional[str]:
         """Try to get version from git tags."""
