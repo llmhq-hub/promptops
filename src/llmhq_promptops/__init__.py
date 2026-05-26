@@ -35,6 +35,11 @@ from .core.resolver import (
     GitResolver,
 )
 
+from .core.deploys import (
+    DeployEvent,
+    DeployLog,
+)
+
 # Future: Framework adapters will be added in later releases
 LANGCHAIN_AVAILABLE = False
 
@@ -54,10 +59,14 @@ __all__ = [
     # Git integration
     "GitVersioning",
 
-    # Resolver layer (Phase 1.5a)
+    # Resolver layer (Phase 1.5a M1)
     "Resolver",
     "ResolvedPrompt",
     "GitResolver",
+
+    # Deploy event log (Phase 1.5a M4)
+    "DeployEvent",
+    "DeployLog",
 
     # Constants
     "LANGCHAIN_AVAILABLE",

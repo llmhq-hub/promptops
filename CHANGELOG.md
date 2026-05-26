@@ -24,10 +24,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New `promptops migrate tag-history` CLI command. Walks each prompt's commit history (oldest first) and creates immutable per-prompt git tags of the form `prompt-<id>-v<X>.<Y>.<Z>`. This is the migration path for users moving off the pre-M2 fake-semver fallback: after tagging, `get_latest_version()` returns the real version instead of `commit-<sha>`. Options: `--prompt <id>` (single-prompt mode), `--dry-run`, `--start-version v0.1.0`. The command is idempotent — existing tags are skipped, not overwritten.
 - `GitVersioning._get_tag_version` is now prompt-aware: per-prompt tags scoped to the resolved prompt take priority over legacy global `v1.2.3` tags. Both forms are still recognized.
 
+### Added (Phase 1.5a — M4: Deploy event log)
+- New `core/deploys.py` module with `DeployEvent` frozen dataclass (timestamp + env + commit + deployed_by + metadata) and `DeployLog` class providing append-only access to `.promptops/deploys.jsonl`. `DeployLog.find_at(timestamp, env=None)` is the lookup primitive that M5's `promptops blame --at <ts>` will use: given a moment in production, return the most recent deploy event at-or-before that moment.
+- New `promptops deploy event` CLI command. Appends one record to `.promptops/deploys.jsonl` capturing the env, commit (default HEAD), actor (default git user.name, then `$USER`), and arbitrary `--metadata key=value` annotations. Atomic POSIX `O_APPEND` writes — safe under concurrent deploys.
+- New `promptops deploy list` CLI command. Prints recent events newest-first, optionally filtered by `--env`, capped by `--limit`.
+- Public exports: `DeployEvent`, `DeployLog`.
+- Tolerant reader: empty lines and lines that fail to parse as a `DeployEvent` are skipped with a logged warning, not a hard error. A single corrupted line should not stop the audit trail from being readable.
+
+### Changed (Phase 1.5a — M4: Pre-commit early-exit)
+- `hooks/pre_commit.py` now defers `SemanticVersionDetector` instantiation until prompts are detected. Commits that don't touch `.promptops/prompts/*.yaml` (e.g. ordinary source-code commits, or `[deploy]` commits that only append to `deploys.jsonl`) skip the heavy regex/diff setup and exit immediately. The non-verbose path also drops its banner so clean commits stay silent.
+
 ### Tests
 - New `tests/test_resolver.py` with 26 tests covering ResolvedPrompt roundtrip, Resolver Protocol structural typing, GitResolver constructor + all version references, PromptManager resolver injection, and backwards compatibility.
 - New `tests/test_git_versioning.py` with 13 tests covering the M2 fix (commit-reference format, immutability across new commits, tagged-commit precedence, roundtrip via `get_prompt_at_version`) and the M2b per-prompt tag recognition (priority over legacy tags, scoping to the correct prompt, the no-`v`-prefix form).
 - New `tests/test_migrate_cli.py` with 11 tests covering the `migrate tag-history` CLI: happy path (single prompt, all prompts, custom start version), idempotency, error paths (invalid version, invalid prompt id, non-git directory, empty prompts dir), and end-to-end integration with `GitVersioning.get_latest_version`.
+- New `tests/test_deploys.py` with 25 tests covering `DeployEvent` (construction validation, tz-aware timestamp required, to/from-dict roundtrip, JSONL format) and `DeployLog` (atomic append, multi-event ordering, tolerant iter_events that skips empty + malformed lines, `find_at` semantics with env filter, `events_for_env` chronological ordering).
+- New `tests/test_deploy_cli.py` with 13 tests covering `promptops deploy event` (defaults from git, explicit `--commit`/`--by`/`--metadata`, malformed metadata errors, missing-env errors, multiple events in a row, file format) and `promptops deploy list` (empty-log helpful message, newest-first ordering, env filter, `--limit` cap).
 
 ## [0.2.0] - 2026-04-18
 

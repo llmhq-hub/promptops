@@ -30,31 +30,54 @@ class PreCommitHook:
     def __init__(self, repo_path: str = "."):
         """Initialize the pre-commit hook."""
         self.repo_path = Path(repo_path).resolve()
-        self.detector = SemanticVersionDetector()
         self.promptops_dir = self.repo_path / ".promptops"
-        
+
         # Configuration
         self.config = self._load_config()
         self.verbose = self.config.get("verbose", False)
         self.run_tests = self.config.get("pre_commit_tests", False)
         self.block_on_test_failure = self.config.get("block_on_test_failure", True)
-    
+
+        # ``SemanticVersionDetector`` is heavyweight (regex compilation, diff
+        # tooling). Defer instantiation to the lazy ``self.detector`` property
+        # so commits that don't touch prompt files (e.g. ``[deploy]`` commits
+        # that only append to ``.promptops/deploys.jsonl``, or ordinary
+        # source-code commits) exit fast without paying that cost. M4
+        # explicitly targets this optimization to keep the deploy-event
+        # commit loop snappy.
+        self._detector: Optional[SemanticVersionDetector] = None
+
+    @property
+    def detector(self) -> SemanticVersionDetector:
+        if self._detector is None:
+            self._detector = SemanticVersionDetector()
+        return self._detector
+
     def run(self) -> int:
         """Run the pre-commit hook.
-        
+
         Returns:
             0 if successful, non-zero if commit should be blocked
         """
-        self._log("🔍 PromptOps pre-commit hook starting...")
-        
+        # Get staged prompt files BEFORE logging or any heavy setup, so
+        # the early-exit path for non-prompt commits stays silent and
+        # cheap. Most commits in a real repo don't touch prompts.
         try:
-            # Get staged prompt files
             staged_prompt_files = self._get_staged_prompt_files()
-            
-            if not staged_prompt_files:
-                self._log("✅ No prompt files changed, skipping.")
-                return 0
-            
+        except Exception as exc:
+            self._log(f"💥 Pre-commit hook failed early: {exc}")
+            return 1
+
+        if not staged_prompt_files:
+            # Stay quiet on the no-op path. Verbose users still see the
+            # skip line; everyone else gets a clean commit.
+            if self.verbose:
+                self._log("No prompt files changed, skipping.")
+            return 0
+
+        self._log("🔍 PromptOps pre-commit hook starting...")
+
+        try:
             self._log(f"📝 Found {len(staged_prompt_files)} changed prompt files")
             
             # Process each changed file
