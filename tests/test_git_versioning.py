@@ -166,3 +166,88 @@ class TestCommitReferenceRoundtrip:
         content = gv.get_prompt_at_version("hello", short_sha)
         assert content is not None
         assert "Hello" in content
+
+
+# ── M2b: per-prompt tag recognition ─────────────────────────────────
+
+
+SECOND_PROMPT_YAML = """\
+prompt:
+  description: Farewell prompt for scoping tests
+  id: goodbye
+  model: gpt-4-turbo
+  template: 'Goodbye, {{ name }}.'
+variables:
+  name:
+    type: string
+    required: true
+"""
+
+
+@pytest.fixture
+def two_prompt_repo(promptops_repo: Path) -> Path:
+    """The base repo with a SECOND prompt committed.
+
+    Used to verify per-prompt tag scoping — a tag for prompt X must
+    not be returned when looking up prompt Y.
+    """
+    (promptops_repo / ".promptops" / "prompts" / "goodbye.yaml").write_text(
+        SECOND_PROMPT_YAML
+    )
+    _git(promptops_repo, "add", ".")
+    _git(promptops_repo, "commit", "--quiet", "-m", "add goodbye prompt")
+    return promptops_repo
+
+
+class TestPerPromptTagRecognition:
+    """M2b: ``prompt-<id>-v1.2.3`` tags are recognized and scoped per-prompt."""
+
+    def test_per_prompt_tag_is_used_for_matching_prompt(self, promptops_repo: Path):
+        _git(promptops_repo, "tag", "prompt-hello-v0.3.0")
+
+        gv = GitVersioning(str(promptops_repo))
+        assert gv.get_latest_version("hello") == "v0.3.0"
+
+    def test_per_prompt_tag_for_other_prompt_is_ignored(self, two_prompt_repo: Path):
+        """A tag for prompt ``goodbye`` must not influence prompt ``hello``'s version."""
+        head = _git(two_prompt_repo, "rev-parse", "HEAD")
+        _git(two_prompt_repo, "tag", "prompt-goodbye-v9.9.9", head)
+
+        gv = GitVersioning(str(two_prompt_repo))
+        # 'hello' has no per-prompt tag and no legacy tag → falls back to commit-sha
+        hello_version = gv.get_latest_version("hello")
+        assert hello_version is not None
+        assert hello_version.startswith("commit-"), (
+            f"goodbye's tag leaked into hello's version lookup: {hello_version!r}"
+        )
+
+    def test_per_prompt_tag_priority_over_legacy_global_tag(self, promptops_repo: Path):
+        """When a commit has both a global ``v1.0.0`` and a per-prompt tag, per-prompt wins."""
+        _git(promptops_repo, "tag", "v1.0.0")
+        _git(promptops_repo, "tag", "prompt-hello-v5.5.5")
+
+        gv = GitVersioning(str(promptops_repo))
+        assert gv.get_latest_version("hello") == "v5.5.5"
+
+    def test_legacy_global_tag_still_works_without_per_prompt(self, promptops_repo: Path):
+        """The legacy ``v1.0.0`` form still resolves when no per-prompt tag exists."""
+        _git(promptops_repo, "tag", "v2.0.0")
+
+        gv = GitVersioning(str(promptops_repo))
+        assert gv.get_latest_version("hello") == "v2.0.0"
+
+    def test_per_prompt_tag_without_v_prefix_is_accepted(self, promptops_repo: Path):
+        """``prompt-hello-1.0.0`` (no ``v``) is normalized to ``v1.0.0``."""
+        _git(promptops_repo, "tag", "prompt-hello-1.4.2")
+
+        gv = GitVersioning(str(promptops_repo))
+        assert gv.get_latest_version("hello") == "v1.4.2"
+
+    def test_lookup_by_per_prompt_tag_string(self, promptops_repo: Path):
+        """After tagging, the per-prompt version string round-trips through resolution."""
+        _git(promptops_repo, "tag", "prompt-hello-v0.7.0")
+
+        gv = GitVersioning(str(promptops_repo))
+        content = gv.get_prompt_at_version("hello", "v0.7.0")
+        assert content is not None
+        assert "Hello" in content
