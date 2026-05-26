@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (Phase 1.5a — M1: Resolver Protocol)
+- New `core/resolver.py` module with `Resolver` Protocol (PEP 544 `@runtime_checkable`), `ResolvedPrompt` frozen dataclass (text + version + commit + resolved_at + source + prompt_id), and `GitResolver` implementation.
+- `PromptManager.__init__` now accepts an optional `resolver=` keyword argument. Default is `GitResolver(repo_path)`, preserving v0.2.0 behavior.
+- `PromptManager.resolve(prompt_reference)` returns a `ResolvedPrompt` with provenance metadata — for callers that need version/commit info (e.g., incident archaeology logging), not just a rendered string.
+- Public exports: `Resolver`, `ResolvedPrompt`, `GitResolver`.
+
+### Changed
+- `PromptManager._validate_setup` no longer checks for git directly. Git presence validation now lives in `GitResolver.__init__`. This allows future resolvers (e.g., `SnapshotResolver` in M3) to validate their own backends, enabling production usage in Docker images without `.git/`.
+
+### Tests
+- New `tests/test_resolver.py` with 26 tests covering ResolvedPrompt roundtrip, Resolver Protocol structural typing, GitResolver constructor + all version references, PromptManager resolver injection, and backwards compatibility.
+
 ## [0.2.0] - 2026-04-18
 
 ### Security

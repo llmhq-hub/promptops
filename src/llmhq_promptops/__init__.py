@@ -29,6 +29,12 @@ from .core.template import (
 
 from .core.git_versioning import GitVersioning
 
+from .core.resolver import (
+    Resolver,
+    ResolvedPrompt,
+    GitResolver,
+)
+
 # Future: Framework adapters will be added in later releases
 LANGCHAIN_AVAILABLE = False
 
@@ -36,18 +42,23 @@ LANGCHAIN_AVAILABLE = False
 __all__ = [
     # Core functionality
     "PromptManager",
-    "get_prompt", 
+    "get_prompt",
     "get_template",
     "get_prompt_manager",
-    
+
     # Template classes
     "PromptTemplate",
-    "PromptMetadata", 
+    "PromptMetadata",
     "VariableDefinition",
-    
+
     # Git integration
     "GitVersioning",
-    
+
+    # Resolver layer (Phase 1.5a)
+    "Resolver",
+    "ResolvedPrompt",
+    "GitResolver",
+
     # Constants
     "LANGCHAIN_AVAILABLE",
 ]
