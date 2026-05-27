@@ -99,13 +99,26 @@ class GitVersioning:
             return None
     
     def _resolve_version_to_commit(self, prompt_id: str, version: str) -> Optional[str]:
-        """Resolve version string to git commit hash."""
+        """Resolve a version string to a full git commit hash.
+
+        Accepts any of:
+        - The version label returned by ``get_prompt_versions`` — a real
+          semver tag (``v1.2.3``) or the ``commit-<sha>`` fallback.
+        - The 8-char short SHA exposed as ``commit_short`` in that list.
+        - A full 40-char SHA — useful for callers (e.g. snapshot builders)
+          that already have a canonical commit reference and don't want
+          to round-trip through tags.
+        """
         versions = self.get_prompt_versions(prompt_id)
-        
+
         for v in versions:
-            if v["version"] == version or v["commit_short"] == version:
+            if (
+                v["version"] == version
+                or v["commit_short"] == version
+                or v["commit"] == version
+            ):
                 return v["commit"]
-        
+
         return None
     
     def _generate_version(self, commit, index: int, total: int, prompt_id: Optional[str] = None) -> str:
