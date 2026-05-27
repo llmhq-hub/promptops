@@ -9,7 +9,7 @@ This package provides:
 - CLI tools for prompt management and testing
 """
 
-__version__ = "0.1.0"
+__version__ = "0.3.0"
 __author__ = "jision"
 __email__ = "jisionpc@gmail.com"
 

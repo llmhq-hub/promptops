@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-27
+
+Phase 1.5a — Production Runtime + Incident Archaeology. Adds a pluggable Resolver layer, build-time snapshot support (Docker images without `.git/`), a deploy event log, and `promptops blame --at <timestamp>` for incident archaeology. Also fixes a long-standing bug where untagged commits returned a position-based fake semver, and ships a migration tool for users moving off that behavior. Plus a pre-existing version-string desync (`__version__` was stuck at "0.1.0" while the package shipped as 0.2.0) is fixed here.
+
 ### Added (Phase 1.5a — M1: Resolver Protocol)
 - New `core/resolver.py` module with `Resolver` Protocol (PEP 544 `@runtime_checkable`), `ResolvedPrompt` frozen dataclass (text + version + commit + resolved_at + source + prompt_id), and `GitResolver` implementation.
 - `PromptManager.__init__` now accepts an optional `resolver=` keyword argument. Default is `GitResolver(repo_path)`, preserving v0.2.0 behavior.
