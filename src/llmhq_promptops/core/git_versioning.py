@@ -32,21 +32,21 @@ class GitVersioning:
         """Get all versions of a prompt from git history."""
         validate_prompt_id(prompt_id)
         prompt_file = f".promptops/prompts/{prompt_id}.yaml"
-        
+
         # Check cache first
         cache_key = f"{prompt_id}:{self.repo.head.commit.hexsha[:8]}"
         if cache_key in self._version_cache:
             return self._version_cache[cache_key]
-        
+
         versions = []
-        
+
         try:
             # Get commits that modified this file
             commits = list(self.repo.iter_commits(paths=prompt_file))
-            
+
             for i, commit in enumerate(commits):
-                # Generate version number
-                version = self._generate_version(commit, i, len(commits))
+                # Generate version number (prompt-aware: per-prompt tags take priority over global)
+                version = self._generate_version(commit, i, len(commits), prompt_id=prompt_id)
                 
                 versions.append({
                     "version": version,
@@ -108,34 +108,66 @@ class GitVersioning:
         
         return None
     
-    def _generate_version(self, commit, index: int, total: int) -> str:
-        """Generate semantic version number for a commit."""
-        # Try to extract version from commit message or tags
-        tag_version = self._get_tag_version(commit)
+    def _generate_version(self, commit, index: int, total: int, prompt_id: Optional[str] = None) -> str:
+        """Resolve a commit to its version identifier.
+
+        Returns the git tag (e.g. ``v1.2.3``) when the commit is tagged.
+        Otherwise returns a commit reference (e.g. ``commit-abc12345``).
+
+        The commit reference is an immutable identifier — the same commit
+        always returns the same string regardless of how many commits land
+        afterwards. This replaces an earlier position-based fallback
+        (``v{major}.{minor}.{patch}`` derived from index/total) that
+        violated immutability: a commit's "version" would shift every
+        time a new commit was added, which made historical references
+        unreliable for ``promptops blame``-style use cases.
+
+        When ``prompt_id`` is provided, per-prompt tags scoped to that
+        prompt (created by ``promptops migrate tag-history``) take
+        priority over legacy global ``v1.2.3`` tags.
+
+        ``index`` and ``total`` are kept in the signature for backwards
+        compatibility with the call site, but are no longer used.
+        """
+        tag_version = self._get_tag_version(commit, prompt_id=prompt_id)
         if tag_version:
             return tag_version
-        
-        # Auto-generate semantic version based on position
-        # Latest commit gets highest version
-        major = 1 + (total - index - 1) // 100  # Increment major every 100 commits
-        minor = ((total - index - 1) % 100) // 10  # Increment minor every 10 commits  
-        patch = (total - index - 1) % 10  # Increment patch every commit
-        
-        return f"v{major}.{minor}.{patch}"
-    
-    def _get_tag_version(self, commit) -> Optional[str]:
-        """Try to get version from git tags."""
+
+        return f"commit-{commit.hexsha[:8]}"
+
+    def _get_tag_version(self, commit, prompt_id: Optional[str] = None) -> Optional[str]:
+        """Try to get version from git tags.
+
+        Recognizes two tag formats:
+        - Per-prompt: ``prompt-<prompt_id>-v1.2.3`` (created by
+          ``promptops migrate tag-history``). Scoped to a specific prompt;
+          tags for other prompts are ignored.
+        - Legacy global: ``v1.2.3`` or ``1.2.3``. Returned when no
+          per-prompt tag exists on this commit.
+
+        Per-prompt tags take priority — if both forms tag the same commit,
+        the per-prompt tag wins.
+        """
         try:
-            # Check if commit has a version tag
-            for tag in self.repo.tags:
-                if tag.commit == commit:
-                    # Extract version from tag name
-                    match = re.match(r'v?(\d+\.\d+\.\d+)', tag.name)
+            tags_for_commit = [tag for tag in self.repo.tags if tag.commit == commit]
+
+            # Per-prompt tag has priority when prompt_id is known
+            if prompt_id:
+                per_prompt_pattern = rf'^prompt-{re.escape(prompt_id)}-v?(\d+\.\d+\.\d+)$'
+                for tag in tags_for_commit:
+                    match = re.match(per_prompt_pattern, tag.name)
                     if match:
                         return f"v{match.group(1)}"
+
+            # Legacy global tag — anchored end-of-string so per-prompt tags
+            # (e.g. ``prompt-foo-v1.0.0``) don't accidentally match here.
+            for tag in tags_for_commit:
+                match = re.match(r'^v?(\d+\.\d+\.\d+)$', tag.name)
+                if match:
+                    return f"v{match.group(1)}"
         except Exception:
             pass
-        
+
         return None
     
     def list_available_prompts(self) -> List[str]:

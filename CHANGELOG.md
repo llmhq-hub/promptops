@@ -16,8 +16,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - `PromptManager._validate_setup` no longer checks for git directly. Git presence validation now lives in `GitResolver.__init__`. This allows future resolvers (e.g., `SnapshotResolver` in M3) to validate their own backends, enabling production usage in Docker images without `.git/`.
 
+### Fixed (Phase 1.5a — M2: Stable version identifiers)
+- `GitVersioning._generate_version` no longer fabricates a position-based semver (`v1.0.0`, `v1.0.1`, …) for untagged commits. The previous fallback derived the version from a commit's index in `iter_commits` output, so the same commit's "version" would shift every time a new commit landed — directly breaking incident archaeology (`promptops blame --at <timestamp>`).
+- Untagged commits now return a stable, immutable identifier of the form `commit-<8charsha>`. Tagged-commit behavior is unchanged. Lookup by short SHA continues to work, and lookup by the new `commit-<sha>` form also works.
+
+### Added (Phase 1.5a — M2b: Retroactive version tagging)
+- New `promptops migrate tag-history` CLI command. Walks each prompt's commit history (oldest first) and creates immutable per-prompt git tags of the form `prompt-<id>-v<X>.<Y>.<Z>`. This is the migration path for users moving off the pre-M2 fake-semver fallback: after tagging, `get_latest_version()` returns the real version instead of `commit-<sha>`. Options: `--prompt <id>` (single-prompt mode), `--dry-run`, `--start-version v0.1.0`. The command is idempotent — existing tags are skipped, not overwritten.
+- `GitVersioning._get_tag_version` is now prompt-aware: per-prompt tags scoped to the resolved prompt take priority over legacy global `v1.2.3` tags. Both forms are still recognized.
+
 ### Tests
 - New `tests/test_resolver.py` with 26 tests covering ResolvedPrompt roundtrip, Resolver Protocol structural typing, GitResolver constructor + all version references, PromptManager resolver injection, and backwards compatibility.
+- New `tests/test_git_versioning.py` with 13 tests covering the M2 fix (commit-reference format, immutability across new commits, tagged-commit precedence, roundtrip via `get_prompt_at_version`) and the M2b per-prompt tag recognition (priority over legacy tags, scoping to the correct prompt, the no-`v`-prefix form).
+- New `tests/test_migrate_cli.py` with 11 tests covering the `migrate tag-history` CLI: happy path (single prompt, all prompts, custom start version), idempotency, error paths (invalid version, invalid prompt id, non-git directory, empty prompts dir), and end-to-end integration with `GitVersioning.get_latest_version`.
 
 ## [0.2.0] - 2026-04-18
 
