@@ -105,9 +105,16 @@ class GitVersioning:
         - The version label returned by ``get_prompt_versions`` — a real
           semver tag (``v1.2.3``) or the ``commit-<sha>`` fallback.
         - The 8-char short SHA exposed as ``commit_short`` in that list.
-        - A full 40-char SHA — useful for callers (e.g. snapshot builders)
-          that already have a canonical commit reference and don't want
-          to round-trip through tags.
+        - A full 40-char SHA, an abbreviated prefix, or any other ref that
+          ``Repo.commit(...)`` would accept (tag name, ``HEAD~N``, etc.).
+
+        The first three forms hit the prompt's own commit history. The last
+        form falls back to a repo-wide ``Repo.commit(version)`` lookup so
+        callers can resolve a prompt at *any* point in repo history, not
+        only at commits that happened to touch this prompt's file. This is
+        what makes ``promptops blame --at <ts>`` work for prompts that
+        weren't directly modified by the deploy commit — they still
+        existed at that commit, just weren't changed by it.
         """
         versions = self.get_prompt_versions(prompt_id)
 
@@ -119,7 +126,15 @@ class GitVersioning:
             ):
                 return v["commit"]
 
-        return None
+        # Fallback: ask git to resolve ``version`` as any ref the repo knows.
+        # This covers full SHAs, prefixes (>=4 chars), tag names, and symbolic
+        # refs that aren't in the prompt's own history. If git can't resolve
+        # it, we silently return None — the caller will raise a not-found
+        # error with the available prompts listed.
+        try:
+            return self.repo.commit(version).hexsha
+        except Exception:
+            return None
     
     def _generate_version(self, commit, index: int, total: int, prompt_id: Optional[str] = None) -> str:
         """Resolve a commit to its version identifier.
