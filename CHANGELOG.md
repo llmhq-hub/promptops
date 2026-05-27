@@ -44,6 +44,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed (M3 fallout — GitVersioning)
 - `GitVersioning._resolve_version_to_commit` now also accepts a full 40-char SHA as a valid lookup (in addition to the existing version-label and 8-char short-SHA matches). This was needed for `write_snapshot(commit=<sha>)` to pin to a specific commit; the previous behaviour required callers to round-trip through tags or short SHAs. Internal helper change — no public-API impact for v0.2.0 callers.
 
+### Added (Phase 1.5a — M5: Incident archaeology)
+- New `promptops blame --at <timestamp>` CLI command. The Phase 1.5a hero use case: given a moment in production, show *which* deploy was running and *which* prompt versions were resolved at that deploy's commit. Composes `DeployLog.find_at()` (M4) with `AutoResolver.resolve()` (M3) — no new core code needed, just the CLI glue.
+- Supports `--at <iso>` / `--at <date>` / `--at now`. Naive timestamps are assumed UTC with a stderr note. Defaults to `--env prod`; `--prompt <id>` switches from the all-prompts summary to a full-text view of that prompt. Helpful errors when the timestamp predates any deploy or when the env filter has no matches.
+
+### Added (Phase 1.5a — M5b: Backfill from git log)
+- New `promptops backfill-deploys --from-git-log` CLI command. Walks git log, finds commits matching a regex (default `^\[deploy\]`), and creates one `DeployEvent` per match using the commit's authored timestamp + author. Escape hatch for repos that adopt promptops mid-stream and need the audit trail to cover historical deploys.
+- Idempotent: `(commit, env)` is the dedupe key, so repeated runs and parallel `--env prod` + `--env staging` runs are both safe.
+- Backfilled events carry `metadata.backfilled="true"` + `metadata.source="git-log"` so downstream analytics can distinguish them from real-time events recorded by `promptops deploy event`.
+- `--dry-run` to preview, `--pattern` for custom commit-message regex.
+
 ### Tests
 - New `tests/test_resolver.py` with 26 tests covering ResolvedPrompt roundtrip, Resolver Protocol structural typing, GitResolver constructor + all version references, PromptManager resolver injection, and backwards compatibility.
 - New `tests/test_git_versioning.py` with 13 tests covering the M2 fix (commit-reference format, immutability across new commits, tagged-commit precedence, roundtrip via `get_prompt_at_version`) and the M2b per-prompt tag recognition (priority over legacy tags, scoping to the correct prompt, the no-`v`-prefix form).
@@ -53,6 +63,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New `tests/test_snapshot.py` with 27 tests covering `write_snapshot` (default + custom path, top-level fields, prompt coverage, entry shape, pretty vs packed, pinning to a specific commit, non-git rejection) and `SnapshotResolver` (missing-file/invalid-JSON/wrong-schema/missing-prompts rejection, every documented version reference, every error path, full round-trip parity with `GitResolver.resolve(...,"working")`).
 - New `tests/test_auto_resolver.py` with 12 tests covering `AutoResolver` (`prefer="auto"` detection: snapshot-present, no-snapshot-but-git, snapshot-only-no-git Docker case, neither-available; `prefer="snapshot"` and `prefer="git"` explicit modes with missing-backend errors; invalid `prefer` rejected; `resolve()` delegation; `PromptManager(resolver=AutoResolver(...))` end-to-end on a Docker-style directory without `.git/`).
 - New `tests/test_snapshot_cli.py` with 13 tests covering `promptops snapshot build` (default path, custom output, pretty vs packed, `--commit` pinning to historical SHA, prompt count summary, non-git error) and `promptops snapshot inspect` (summary mode, `--detail` mode showing full text, missing-file error, malformed-snapshot error, `--snapshot PATH` for explicit path).
+- New `tests/test_blame_cli.py` with 15 tests covering `promptops blame`: `_parse_timestamp` (now alias, ISO Z, ISO offset, bare date as UTC midnight, invalid input); happy path (finds deploy, lists prompts, query-after-deploy still finds it, `--prompt` full-text view, `now` alias); error paths (no deploy log with helpful message, timestamp before any deploy, wrong env filter, invalid prompt id, missing `--at`, unknown prompt at deploy commit).
+- New `tests/test_backfill_deploys_cli.py` with 12 tests covering `promptops backfill-deploys`: requires `--from-git-log` gate, creates one event per matching commit with backfilled metadata, chronological oldest-first ordering, summary count, `--dry-run` writes nothing, idempotency (re-run skips), `(commit, env)` dedupe key (same commit recorded for prod and staging both succeeds), custom `--pattern`, invalid-regex error, zero-matches reports nothing, `--env` override, non-git directory error.
 
 ## [0.2.0] - 2026-04-18
 
