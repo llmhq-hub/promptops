@@ -4,211 +4,196 @@
 [![Python Support](https://img.shields.io/pypi/pyversions/llmhq-promptops.svg)](https://pypi.org/project/llmhq-promptops/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A comprehensive prompt management and testing framework for production LLM workflows. Built for teams who need reliable, version-controlled prompt development with zero-manual versioning.
+**Git blame for prompts.** When prod breaks, know exactly which prompt version was running, in seconds. No SaaS, no vendor lock-in — all in your own git.
+
+`llmhq-promptops` is a prompt management framework that records every deploy, builds an immutable snapshot at CI time, and lets you ask `promptops blame --at <timestamp>` to find out what was running when an incident happened. Built for teams who already use git for everything else.
 
 ## ✨ Key Features
 
-- **🔄 Automated Git Versioning** - Zero-manual versioning with git hooks and semantic version detection
-- **📝 Uncommitted Change Testing** - Test prompts instantly with `:unstaged`, `:working`, `:latest` references
-- **🐍 Python SDK Integration** - `pip install llmhq-promptops` for seamless app integration  
-- **🧪 Version-Aware Testing** - Test different prompt versions with comprehensive validation
-- **📊 Markdown Reports** - Automatic generation of version change documentation
-- **⚙️ Git Hook Automation** - Pre-commit and post-commit hooks for seamless developer workflow
+- **🔎 Incident archaeology** — `promptops blame --at <ts>` resolves "what prompt was running in prod at that moment" by composing the deploy log with git history.
+- **🐳 Production runtime without `.git/`** — `promptops snapshot build` writes a self-contained `.promptops/snapshot.json`. Ship that in your Docker image; `AutoResolver` picks it up automatically.
+- **📒 Deploy event log** — append-only `.promptops/deploys.jsonl` records every deploy with provenance (env, commit, actor, metadata). Committed to git alongside your prompts.
+- **🔄 Automated git versioning** — Pre-commit hook detects prompt changes, bumps semver in YAML metadata, re-stages.
+- **📝 Version-aware testing** — `:unstaged`, `:working`, `:latest`, `commit-<sha>`, or any tag.
+- **🐍 Python SDK** — `PromptManager(resolver=AutoResolver())` works the same in dev (uses git) and prod (uses snapshot).
 
-## 🚀 Quick Start
+## ⚡ Quick Start
 
-### Installation
+Two paths depending on what you want to do.
+
+### Path A — 60-second demo on a sample repo
+
+Walk through the incident-archaeology flow on a pre-baked repo, no setup of your own.
 
 ```bash
 pip install llmhq-promptops
+
+git clone https://github.com/llmhq-hub/promptops.git
+cd promptops/examples/incident-archaeology-demo
+./setup.sh                       # builds a tmp git repo with pre-baked history
+cd /tmp/promptops-demo
+
+# 1. Look at what's been deployed
+promptops deploy list
+
+# 2. "Production broke at 10:00 UTC. What was running?"
+promptops blame --at 2026-05-20T10:00:00Z
+
+# 3. Same question, full text of one prompt
+promptops blame --at 2026-05-20T10:00:00Z --prompt summarizer
 ```
 
-### Initialize Your Project
+That's the hero use case. Three commands, one provable answer.
+
+> Full walkthrough + screencast script: [`examples/incident-archaeology-demo/README.md`](examples/incident-archaeology-demo/README.md)
+
+### Path B — Try it on your own repo
+
+For when you want to add this to a real project.
 
 ```bash
-# Create a new project with git hooks
-promptops init repo
+pip install llmhq-promptops
 
-# Check installation
-promptops --help
-```
+cd <your-project>                # any git repo
+promptops init repo              # creates .promptops/ directory
+promptops hooks install          # opt-in: auto-version on commit
 
-### Create Your First Prompt
+# Write a prompt
+promptops create prompt user-onboarding
 
-```bash
-# Create a new prompt template
-promptops create prompt welcome-message
+# Render it
+python -c "from llmhq_promptops import get_prompt; print(get_prompt('user-onboarding', {'name': 'World'}))"
 
-# Test uncommitted changes
-promptops test --prompt welcome-message:unstaged
-
-# Check status of all prompts
-promptops test status
+# Record a deploy and look it up later
+promptops deploy event --env prod -m release=v0.1.0
+promptops blame --at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 ```
 
 ## 📖 Usage Examples
 
-### Basic Prompt Resolution
+### Recommended production setup
 
 ```python
-from llmhq_promptops import get_prompt
+from llmhq_promptops import PromptManager, AutoResolver
 
-# Smart default (unstaged if different, else working)
-prompt = get_prompt("user-onboarding") 
+# Same code in dev (uses .git/) and prod (uses .promptops/snapshot.json)
+manager = PromptManager(resolver=AutoResolver(repo_path="."))
 
-# Specific version references
-prompt = get_prompt("user-onboarding:v1.2.1")    # Specific version
-prompt = get_prompt("user-onboarding:unstaged")  # Test uncommitted changes
-prompt = get_prompt("user-onboarding:working")   # Latest committed (HEAD)
-prompt = get_prompt("user-onboarding:latest")    # Alias for working
-
-# With variables
-rendered = get_prompt("user-onboarding", {"user_name": "Alice", "plan": "Pro"})
-print(rendered)
+prompt = manager.get_prompt("user-onboarding", {"name": "Alice"})
 ```
 
-### Using with LLM Frameworks
+### Resolving with full provenance
+
+When you need to know *which* version actually ran (for logging, observability):
+
+```python
+resolved = manager.resolve("user-onboarding")
+# resolved.text       — raw YAML
+# resolved.version    — e.g. "v1.2.3" or "commit-abc12345"
+# resolved.commit     — full 40-char SHA
+# resolved.source     — "git" or "snapshot"
+# resolved.resolved_at — tz-aware UTC datetime
+
+log_to_observability({
+    "prompt": resolved.prompt_id,
+    "version": resolved.version,
+    "commit": resolved.commit,
+    "source": resolved.source,
+})
+```
+
+### Specific versions
 
 ```python
 from llmhq_promptops import get_prompt
 
-# Get versioned prompt for any LLM framework
-prompt_text = get_prompt(
-    "user-onboarding:working", 
-    {"user_name": "John", "plan": "Enterprise"}
-)
+prompt = get_prompt("user-onboarding")                    # smart default
+prompt = get_prompt("user-onboarding:v1.2.1")             # tagged version
+prompt = get_prompt("user-onboarding:commit-abc12345")    # untagged commit
+prompt = get_prompt("user-onboarding:unstaged")           # working tree
+prompt = get_prompt("user-onboarding:working")            # HEAD (committed)
+```
 
-# Use with OpenAI
+### Using with LLM frameworks
+
+```python
+from llmhq_promptops import get_prompt
+
+prompt = get_prompt("user-onboarding:working", {"name": "John"})
+
+# OpenAI
 import openai
-response = openai.chat.completions.create(
+openai.chat.completions.create(
     model="gpt-4",
-    messages=[{"role": "user", "content": prompt_text}]
+    messages=[{"role": "user", "content": prompt}],
 )
 
-# Use with Anthropic
+# Anthropic
 import anthropic
-client = anthropic.Anthropic()
-response = client.messages.create(
+anthropic.Anthropic().messages.create(
     model="claude-3-sonnet-20240229",
-    messages=[{"role": "user", "content": prompt_text}]
+    messages=[{"role": "user", "content": prompt}],
 )
-
-# Use with any other LLM framework
-print(f"Prompt ready for LLM: {prompt_text}")
-```
-
-### Advanced Usage
-
-```python
-from llmhq_promptops import PromptManager
-
-manager = PromptManager()
-
-# Check if prompt has uncommitted changes
-if manager.has_uncommitted_changes("user-onboarding"):
-    # Test the latest changes
-    rendered = manager.get_prompt("user-onboarding:unstaged", {"user_name": "Alice"})
-else:
-    # Use committed version
-    rendered = manager.get_prompt("user-onboarding:working", {"user_name": "Alice"})
-
-# Get prompt differences
-diff = manager.get_prompt_diff("user-onboarding", "working", "unstaged")
-print(diff)
-
-# List all prompt statuses
-statuses = manager.list_prompt_statuses()
-for prompt_id, status in statuses.items():
-    print(f"{prompt_id}: {status}")
 ```
 
 ## 🔧 CLI Commands
 
-### Initialization & Setup
-```bash
-# Initialize project with interactive setup
-promptops init repo --interactive
+| Command group | What it does |
+|---|---|
+| `promptops init repo` | Create `.promptops/` directory structure |
+| `promptops hooks install` | Opt-in auto-versioning hooks (pre-commit + post-commit) |
+| `promptops create prompt <id>` | Scaffold a new prompt YAML |
+| `promptops render prompt <file>` | Render a prompt with variables |
+| `promptops test status` / `test diff` / `test runtest` | Version-aware prompt testing |
+| `promptops deploy event --env <e>` | Append a deploy event to `.promptops/deploys.jsonl` |
+| `promptops deploy list` | Show recent deploys, newest first |
+| `promptops snapshot build` | Write `.promptops/snapshot.json` (production-runtime artifact) |
+| `promptops snapshot inspect` | Print contents of a snapshot |
+| `promptops blame --at <ts>` | Incident archaeology: what was running when? |
+| `promptops backfill-deploys --from-git-log` | Seed the deploy log from existing git history |
+| `promptops migrate tag-history` | Create per-prompt git tags for historical commits |
 
-# Install git hooks for automatic versioning
-promptops hooks install
-
-# Check hook status
-promptops hooks status
-```
-
-### Testing & Development
-```bash
-# Show status of all prompts
-promptops test status
-
-# Test specific version references
-promptops test --prompt user-onboarding:unstaged
-promptops test --prompt user-onboarding:working  
-promptops test --prompt user-onboarding:v1.2.0
-
-# Compare versions
-promptops test diff user-onboarding --version1=working --version2=unstaged
-
-# Test with custom variables
-promptops test --prompt user-onboarding --variables '{"name": "Alice", "plan": "Pro"}'
-```
-
-### Hook Management
-```bash
-# Install automated versioning hooks
-promptops hooks install
-
-# Configure hook behavior
-promptops hooks configure
-
-# Check installation status
-promptops hooks status
-
-# Remove hooks
-promptops hooks uninstall
-```
+Full help: `promptops --help` or `promptops <command> --help`.
 
 ## 📁 Project Structure
 
 ```
 .promptops/
-├── prompts/          # YAML prompt templates with metadata and auto-versioning
-├── configs/          # LLM and environment configurations  
-├── templates/        # Jinja2 template files
-├── vars/             # Variable definition files
-├── tests/            # Test datasets (JSON/YAML)
-├── results/          # Generated test reports (markdown)
-├── logs/             # LLM call logs and analytics
-├── reports/          # Auto-generated version change reports
-└── config.yaml       # Git hook configuration
+├── prompts/           # YAML prompt templates (auto-versioned)
+├── deploys.jsonl      # Append-only deploy event log (committed to git)
+├── snapshot.json      # Production-runtime snapshot (built at CI time)
+├── config.yaml        # Hook + tool configuration
+├── tests/             # Test datasets
+├── results/           # Test reports
+├── logs/              # Audit logs
+└── reports/           # Auto-generated version change notes
 ```
 
 ## 📋 Prompt Schema
 
 ```yaml
 # .promptops/prompts/user-onboarding.yaml
-# Version automatically managed by git hooks
 metadata:
   id: user-onboarding
-  version: "1.2.0"  # Auto-incremented by pre-commit hook
+  version: "1.2.0"            # Auto-incremented by pre-commit hook
   description: "User onboarding welcome message"
   tags: ["onboarding", "welcome"]
-  
+
 models:
   default: gpt-4-turbo
   supported: [gpt-4-turbo, claude-3-sonnet, llama2-70b]
-  
+
 template: |
   Welcome {{ user_name }}!
   Available features:
   {% for feature in features %}
   - {{ feature }}
   {% endfor %}
-  
+
 variables:
   user_name: {type: string, required: true}
-  features: {type: list, default: ["Browse", "Purchase"]}
-  
+  features:  {type: list,   default: ["Browse", "Purchase"]}
+
 tests:
   - dataset: .promptops/tests/onboarding-data.json
     metrics: {max_tokens: 150, min_relevance: 0.8}
@@ -216,89 +201,66 @@ tests:
 
 ## 🔄 Automated Versioning
 
-### Semantic Version Rules
-- **PATCH** (1.0.0 → 1.0.1): Template content changes only
-- **MINOR** (1.0.0 → 1.1.0): New variables added (backward compatible)
-- **MAJOR** (1.0.0 → 2.0.0): Required variables removed (breaking change)
+Semantic version rules applied by the pre-commit hook:
 
-### Git Hook Workflow
-1. **Developer edits prompt** → Changes saved to working directory
-2. **Test uncommitted changes** → `promptops test --prompt name:unstaged`
-3. **Git add & commit** → Pre-commit hook automatically:
-   - Detects changed prompts
-   - Analyzes changes for semantic versioning
-   - Updates version numbers in YAML files
-   - Re-stages updated files
-4. **Commit completes** → Post-commit hook automatically:
-   - Creates git tags for new versions
-   - Runs validation tests
-   - Generates audit logs
+- **PATCH** (1.0.0 → 1.0.1) — template content changes only
+- **MINOR** (1.0.0 → 1.1.0) — new variables added (backwards compatible)
+- **MAJOR** (1.0.0 → 2.0.0) — required variables removed (breaking change)
 
-**Result**: Zero manual version management with instant testing capabilities.
+**Workflow:**
+
+1. Edit a prompt → changes in working tree
+2. `promptops test --prompt name:unstaged` (test before commit)
+3. `git add` + `git commit` → pre-commit hook bumps version and re-stages
+4. Post-commit hook tags the new version and generates a changelog entry
+
+Zero manual version management.
 
 ## 🌟 Version References
 
-| Reference | Description | Use Case |
+| Reference | Resolves to | Use case |
 |-----------|-------------|----------|
 | `prompt-name` | Smart default (unstaged if different, else working) | Development |
-| `:unstaged` | Uncommitted changes in working directory | Testing changes |
-| `:working` | Latest committed version (HEAD) | Production |
-| `:latest` | Alias for `:working` | Production |
-| `:v1.2.3` | Specific semantic version | Reproducible builds |
+| `:unstaged` | Uncommitted working-tree content | Testing changes before commit |
+| `:working` / `:latest` / `:head` | Latest committed (HEAD) | Production |
+| `:v1.2.3` | Specific semver tag | Reproducible builds |
+| `:commit-abc12345` | Immutable commit reference for untagged commits | Incident archaeology |
 
 ## 🛠️ Requirements
 
-- **Python**: 3.8+
-- **Git**: Required for versioning
-- **YAML**: For prompt template storage
-- **Jinja2**: For template rendering
+- Python 3.8+
+- Git (for versioning at dev time — **not** required at production runtime if you ship `snapshot.json`)
+- YAML + Jinja2 (auto-installed)
 
 ## 📚 Dependencies
 
-- **Core**: Typer (CLI), Jinja2 (templating), PyYAML (parsing)
-- **Git Integration**: GitPython (versioning)
-- **Typing**: typing_extensions (Python 3.8 compatibility)
+- **Core:** Typer (CLI), Jinja2 (templates), PyYAML (parsing), GitPython (git access)
+- **Compatibility:** typing_extensions (Python 3.8)
 
 ## 🤝 Contributing
 
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-### Development Setup
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ```bash
-# Clone the repository
-git clone https://github.com/your-org/llmhq-promptops.git
-cd llmhq-promptops
-
-# Install development dependencies
+git clone https://github.com/llmhq-hub/promptops.git
+cd promptops
 python -m venv venv
-source venv/bin/activate  # or `venv\Scripts\activate` on Windows
-pip install -r requirements.txt
+source venv/bin/activate
 pip install -e .
-
-# Run tests
-python -m pytest tests/
-
-# Test CLI commands
-promptops --help
+pip install pytest
+pytest tests/ --ignore=tests/test_versioning.py --ignore=tests/test_langchain.py
 ```
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- Built with [Typer](https://typer.tiangolo.com/) for CLI functionality
-- Inspired by modern DevOps practices for infrastructure as code
-- Designed for reliable prompt management in production applications
+MIT — see [LICENSE](LICENSE).
 
 ## 📞 Support
 
-- **Issues**: [GitHub Issues](https://github.com/your-org/llmhq-promptops/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/your-org/llmhq-promptops/discussions)
-- **Documentation**: [Full Documentation](https://your-org.github.io/llmhq-promptops/)
+- **Issues:** [github.com/llmhq-hub/promptops/issues](https://github.com/llmhq-hub/promptops/issues)
+- **Discussions:** [github.com/llmhq-hub/promptops/discussions](https://github.com/llmhq-hub/promptops/discussions)
+- **Releases & changelog:** [github.com/llmhq-hub/promptops/releases](https://github.com/llmhq-hub/promptops/releases)
 
 ---
 
-**Made with ❤️ for the LLM development community**
+**Made with ❤️ for teams shipping LLMs in production.**
