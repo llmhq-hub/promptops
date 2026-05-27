@@ -1,0 +1,20 @@
+prompt:
+  description: Draft a refund-resolution reply for a support ticket.
+  id: refund-resolver
+  model: gpt-4-turbo
+  template: |
+    You are a customer support agent. The customer has requested a refund.
+
+    Ticket text:
+    {{ ticket_text }}
+
+    Draft a polite reply that:
+    1. Acknowledges the customer's concern.
+    2. States whether the refund is approved (based on policy).
+    3. Provides a clear next step.
+
+    Reply in 3 short paragraphs.
+variables:
+  ticket_text:
+    type: string
+    required: true

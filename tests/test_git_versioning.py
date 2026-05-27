@@ -251,3 +251,58 @@ class TestPerPromptTagRecognition:
         content = gv.get_prompt_at_version("hello", "v0.7.0")
         assert content is not None
         assert "Hello" in content
+
+
+# ── M5c: resolve a prompt at a commit that didn't touch its file ────
+
+
+class TestResolveAtUnrelatedCommit:
+    """Regression for the blame-multiprompt bug found while building v0.3.1's demo.
+
+    The bug: ``_resolve_version_to_commit`` only walked the prompt's own file
+    history, so resolving prompt A at a commit that only touched prompt B
+    failed with ``not found`` even though prompt A existed at that commit
+    unchanged. This made ``promptops blame --at <ts>`` fail for any prompt
+    that wasn't directly modified by the deploy commit — i.e. the common
+    case.
+
+    Fix: fall back to ``Repo.commit(version)`` so any valid commit ref in
+    the repo resolves, and let ``get_prompt_at_version`` do the actual
+    tree lookup (which already handles "file existed at that commit but
+    wasn't changed by it" cleanly via ``commit.tree[path]``).
+    """
+
+    def test_resolve_at_commit_that_only_touched_other_prompt(
+        self, promptops_repo: Path
+    ):
+        # Add a SECOND prompt in its own commit
+        second = promptops_repo / ".promptops" / "prompts" / "goodbye.yaml"
+        second.write_text(SAMPLE_PROMPT_YAML.replace("hello", "goodbye"))
+        _git(promptops_repo, "add", ".")
+        _git(promptops_repo, "commit", "--quiet", "-m", "add goodbye")
+        goodbye_commit = _git(promptops_repo, "rev-parse", "HEAD")
+
+        # The goodbye commit didn't touch hello.yaml at all, but hello.yaml
+        # existed at that commit (from the initial commit). Resolving hello
+        # at the goodbye commit must succeed.
+        gv = GitVersioning(str(promptops_repo))
+        text = gv.get_prompt_at_version("hello", goodbye_commit)
+        assert text is not None
+        assert "Hello" in text
+
+    def test_resolve_at_full_sha_anywhere_in_repo(self, promptops_repo: Path):
+        head_sha = _git(promptops_repo, "rev-parse", "HEAD")
+        gv = GitVersioning(str(promptops_repo))
+        # Direct ``_resolve_version_to_commit`` returns the same full SHA back.
+        assert gv._resolve_version_to_commit("hello", head_sha) == head_sha
+
+    def test_resolve_at_short_sha_prefix(self, promptops_repo: Path):
+        """7-char prefixes were previously rejected (commit_short is 8). Now they resolve via git."""
+        head_sha = _git(promptops_repo, "rev-parse", "HEAD")
+        short_7 = head_sha[:7]
+        gv = GitVersioning(str(promptops_repo))
+        assert gv._resolve_version_to_commit("hello", short_7) == head_sha
+
+    def test_truly_invalid_ref_still_returns_none(self, promptops_repo: Path):
+        gv = GitVersioning(str(promptops_repo))
+        assert gv._resolve_version_to_commit("hello", "definitely-not-a-ref") is None

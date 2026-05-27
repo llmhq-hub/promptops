@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "llmhq-promptops"
-version = "0.3.0"
+version = "0.3.1"
 description = "Comprehensive prompt management and testing framework for production LLM workflows with automated git versioning"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -46,11 +46,11 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/llmhq-hub/llmhq-promptops"
-Documentation = "https://github.com/llmhq-hub/llmhq-promptops"
-Repository = "https://github.com/llmhq-hub/llmhq-promptops"
-Issues = "https://github.com/llmhq-hub/llmhq-promptops/issues"
-Changelog = "https://github.com/llmhq-hub/llmhq-promptops/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/llmhq-hub/promptops"
+Documentation = "https://github.com/llmhq-hub/promptops"
+Repository = "https://github.com/llmhq-hub/promptops"
+Issues = "https://github.com/llmhq-hub/promptops/issues"
+Changelog = "https://github.com/llmhq-hub/promptops/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = [
