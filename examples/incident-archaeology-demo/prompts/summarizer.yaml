@@ -1,0 +1,18 @@
+prompt:
+  description: Summarize an article into N bullet points.
+  id: summarizer
+  model: gpt-4-turbo
+  template: |
+    Summarize the article below in {{ num_bullets }} bullet points.
+    Be concise and factual.
+
+    Article:
+    {{ article }}
+variables:
+  article:
+    type: string
+    required: true
+  num_bullets:
+    type: int
+    required: false
+    default: 3

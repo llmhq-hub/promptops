@@ -1,0 +1,18 @@
+prompt:
+  description: Classify a user message into one of {billing, support, sales, other}.
+  id: intent-classifier
+  model: gpt-4-turbo
+  template: |
+    Classify the following user message into exactly one of these labels:
+    - billing
+    - support
+    - sales
+    - other
+
+    Respond with just the label, nothing else.
+
+    User message: {{ message }}
+variables:
+  message:
+    type: string
+    required: true
