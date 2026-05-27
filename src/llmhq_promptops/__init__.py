@@ -40,6 +40,12 @@ from .core.deploys import (
     DeployLog,
 )
 
+from .core.snapshot import (
+    SnapshotResolver,
+    AutoResolver,
+    write_snapshot,
+)
+
 # Future: Framework adapters will be added in later releases
 LANGCHAIN_AVAILABLE = False
 
@@ -67,6 +73,11 @@ __all__ = [
     # Deploy event log (Phase 1.5a M4)
     "DeployEvent",
     "DeployLog",
+
+    # Snapshot + auto-resolver (Phase 1.5a M3)
+    "SnapshotResolver",
+    "AutoResolver",
+    "write_snapshot",
 
     # Constants
     "LANGCHAIN_AVAILABLE",

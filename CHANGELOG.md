@@ -34,12 +34,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed (Phase 1.5a — M4: Pre-commit early-exit)
 - `hooks/pre_commit.py` now defers `SemanticVersionDetector` instantiation until prompts are detected. Commits that don't touch `.promptops/prompts/*.yaml` (e.g. ordinary source-code commits, or `[deploy]` commits that only append to `deploys.jsonl`) skip the heavy regex/diff setup and exit immediately. The non-verbose path also drops its banner so clean commits stay silent.
 
+### Added (Phase 1.5a — M3: Snapshot + AutoResolver)
+- New `core/snapshot.py` module with `write_snapshot()` (builds a self-contained JSON file from a git repo), `SnapshotResolver` (implements the `Resolver` Protocol by reading the snapshot — no git needed at runtime), and `AutoResolver` (auto-picks snapshot when available, falls back to git, supports explicit `prefer="snapshot"`/`"git"`). This unlocks the production-runtime use case: ship a Docker image without `.git/`, point `PromptManager(resolver=AutoResolver(...))` at the snapshot.
+- New `promptops snapshot build` CLI command. Builds `.promptops/snapshot.json` containing raw YAML text + resolved version + commit for every prompt. Options: `--output PATH`, `--commit <sha|tag>` (default HEAD), `--pretty` (indented JSON). Atomic temp-file + `os.replace` write so concurrent readers never see a half-written snapshot.
+- New `promptops snapshot inspect` CLI command. Summary view by default, `--detail` to show full prompt text. Supports `--snapshot PATH` for non-default locations.
+- Public exports: `SnapshotResolver`, `AutoResolver`, `write_snapshot`.
+- Snapshot file format documented in `core/snapshot.py` (schema_version=1).
+
+### Changed (M3 fallout — GitVersioning)
+- `GitVersioning._resolve_version_to_commit` now also accepts a full 40-char SHA as a valid lookup (in addition to the existing version-label and 8-char short-SHA matches). This was needed for `write_snapshot(commit=<sha>)` to pin to a specific commit; the previous behaviour required callers to round-trip through tags or short SHAs. Internal helper change — no public-API impact for v0.2.0 callers.
+
 ### Tests
 - New `tests/test_resolver.py` with 26 tests covering ResolvedPrompt roundtrip, Resolver Protocol structural typing, GitResolver constructor + all version references, PromptManager resolver injection, and backwards compatibility.
 - New `tests/test_git_versioning.py` with 13 tests covering the M2 fix (commit-reference format, immutability across new commits, tagged-commit precedence, roundtrip via `get_prompt_at_version`) and the M2b per-prompt tag recognition (priority over legacy tags, scoping to the correct prompt, the no-`v`-prefix form).
 - New `tests/test_migrate_cli.py` with 11 tests covering the `migrate tag-history` CLI: happy path (single prompt, all prompts, custom start version), idempotency, error paths (invalid version, invalid prompt id, non-git directory, empty prompts dir), and end-to-end integration with `GitVersioning.get_latest_version`.
 - New `tests/test_deploys.py` with 25 tests covering `DeployEvent` (construction validation, tz-aware timestamp required, to/from-dict roundtrip, JSONL format) and `DeployLog` (atomic append, multi-event ordering, tolerant iter_events that skips empty + malformed lines, `find_at` semantics with env filter, `events_for_env` chronological ordering).
 - New `tests/test_deploy_cli.py` with 13 tests covering `promptops deploy event` (defaults from git, explicit `--commit`/`--by`/`--metadata`, malformed metadata errors, missing-env errors, multiple events in a row, file format) and `promptops deploy list` (empty-log helpful message, newest-first ordering, env filter, `--limit` cap).
+- New `tests/test_snapshot.py` with 27 tests covering `write_snapshot` (default + custom path, top-level fields, prompt coverage, entry shape, pretty vs packed, pinning to a specific commit, non-git rejection) and `SnapshotResolver` (missing-file/invalid-JSON/wrong-schema/missing-prompts rejection, every documented version reference, every error path, full round-trip parity with `GitResolver.resolve(...,"working")`).
+- New `tests/test_auto_resolver.py` with 12 tests covering `AutoResolver` (`prefer="auto"` detection: snapshot-present, no-snapshot-but-git, snapshot-only-no-git Docker case, neither-available; `prefer="snapshot"` and `prefer="git"` explicit modes with missing-backend errors; invalid `prefer` rejected; `resolve()` delegation; `PromptManager(resolver=AutoResolver(...))` end-to-end on a Docker-style directory without `.git/`).
+- New `tests/test_snapshot_cli.py` with 13 tests covering `promptops snapshot build` (default path, custom output, pretty vs packed, `--commit` pinning to historical SHA, prompt count summary, non-git error) and `promptops snapshot inspect` (summary mode, `--detail` mode showing full text, missing-file error, malformed-snapshot error, `--snapshot PATH` for explicit path).
 
 ## [0.2.0] - 2026-04-18
 
