@@ -5,41 +5,60 @@ from pathlib import Path
 from functools import lru_cache
 
 from .core.git_versioning import GitVersioning
+from .core.resolver import GitResolver, ResolvedPrompt, Resolver
 from .core.template import PromptTemplate
 from .core.validation import validate_prompt_id
 
 
 class PromptManager:
     """Core prompt management system with git-based versioning."""
-    
-    def __init__(self, repo_path: str = ".", cache_size: int = 128):
+
+    def __init__(
+        self,
+        repo_path: str = ".",
+        cache_size: int = 128,
+        resolver: Optional[Resolver] = None,
+    ):
         """Initialize PromptManager.
-        
+
         Args:
             repo_path: Path to git repository containing .promptops directory
             cache_size: Size of LRU cache for prompt templates
+            resolver: Optional pluggable Resolver. Defaults to GitResolver(repo_path).
+                Phase 1.5a M3 will add SnapshotResolver / AutoResolver for production
+                runtime use (Docker images without `.git/`).
         """
         self.repo_path = Path(repo_path).resolve()
         self.promptops_dir = self.repo_path / ".promptops"
+
+        # Backwards-compat: keep `git_versioning` attribute so callers that
+        # access manager.git_versioning.has_uncommitted_changes(...) etc.
+        # continue to work unchanged.
         self.git_versioning = GitVersioning(repo_path)
-        
+
+        # Pluggable resolver. When None (the default), construct GitResolver —
+        # this preserves v0.2.0 behavior (git required) for callers who don't
+        # pass `resolver=`. To opt into the new behavior, pass an explicit
+        # resolver (e.g., a SnapshotResolver in production).
+        self._resolver: Resolver = resolver if resolver is not None else GitResolver(repo_path)
+
         # Setup caching
         self._get_template_cached = lru_cache(maxsize=cache_size)(self._get_template_uncached)
-        
+
         # Setup logging
         self.logger = logging.getLogger(__name__)
-        
-        # Validate setup
+
+        # Validate setup (directory layout only; resolver validates its own backend)
         self._validate_setup()
-    
+
     def _validate_setup(self):
-        """Validate that promptops is properly setup."""
-        if not self.git_versioning.is_git_repo():
-            raise ValueError(f"Directory {self.repo_path} is not a git repository")
-        
+        """Validate directory layout. Backend validation lives in the Resolver."""
         if not self.promptops_dir.exists():
-            raise ValueError(f"PromptOps not initialized. Run 'promptops init repo' first")
-        
+            raise ValueError(
+                f"PromptOps not initialized at {self.repo_path}. "
+                f"Run 'promptops init repo' first"
+            )
+
         prompts_dir = self.promptops_dir / "prompts"
         if not prompts_dir.exists():
             raise ValueError(f"Prompts directory not found: {prompts_dir}")
@@ -84,19 +103,38 @@ class PromptManager:
         return self._get_template_cached(cache_key, prompt_id, version)
     
     def _get_template_uncached(self, cache_key: str, prompt_id: str, version: Optional[str]) -> PromptTemplate:
-        """Internal method to get template without caching."""
-        # Get YAML content from git
-        yaml_content = self.git_versioning.get_prompt_at_version(prompt_id, version)
-        
-        if yaml_content is None:
-            available = self.list_prompts()
-            raise ValueError(f"Prompt '{prompt_id}' not found. Available prompts: {available}")
-        
+        """Internal method to get template without caching.
+
+        Routes through the configured Resolver. The resolver itself raises
+        ValueError if the prompt is not found, so the not-found path is
+        handled there with the most accurate context.
+        """
+        resolved = self._resolver.resolve(prompt_id, version)
+        yaml_content = resolved.text
+
         try:
             return PromptTemplate(yaml_content)
         except Exception as e:
             self.logger.error(f"Failed to parse prompt {prompt_id}: {e}")
             raise ValueError(f"Failed to parse prompt {prompt_id}: {e}")
+
+    def resolve(self, prompt_reference: str) -> ResolvedPrompt:
+        """Resolve a prompt to its raw content + provenance metadata.
+
+        Returns a `ResolvedPrompt` with `text` (raw YAML, not rendered),
+        plus `version`, `commit`, `resolved_at`, `source`, `prompt_id`.
+
+        Use this when you need provenance (e.g., logging which prompt
+        version was used at a given time). For a rendered string only,
+        keep using `get_prompt(reference, variables)`.
+
+        Example:
+            manager = PromptManager()
+            resolved = manager.resolve("user-onboarding:v1.2.0")
+            print(resolved.version, resolved.commit, resolved.source)
+        """
+        prompt_id, version = self._parse_prompt_reference(prompt_reference)
+        return self._resolver.resolve(prompt_id, version)
     
     def _parse_prompt_reference(self, reference: str) -> tuple[str, Optional[str]]:
         """Parse prompt reference into ID and version.
