@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "llmhq-promptops"
-version = "0.3.1"
+version = "0.3.2"
 description = "Comprehensive prompt management and testing framework for production LLM workflows with automated git versioning"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -20,8 +20,10 @@ keywords = [
   "cli", "sdk", "production", "workflow", "template", "jinja2"
 ]
 classifiers = [
-  "Development Status :: 4 - Beta",
+  "Development Status :: 5 - Production/Stable",
+  "Environment :: Console",
   "Intended Audience :: Developers",
+  "Intended Audience :: System Administrators",
   "License :: OSI Approved :: MIT License",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
@@ -30,11 +32,14 @@ classifiers = [
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
-  "Topic :: Software Development :: Libraries :: Python Modules",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
-  "Topic :: Software Development :: Version Control :: Git",
+  "Topic :: Software Development :: Build Tools",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: Software Development :: Quality Assurance",
   "Topic :: Software Development :: Testing",
-  "Topic :: Text Processing :: Linguistic"
+  "Topic :: Software Development :: Version Control :: Git",
+  "Topic :: System :: Logging",
+  "Typing :: Typed"
 ]
 dependencies = [
   "click>=8.1.8",
@@ -66,3 +71,8 @@ promptops = "cli.main:app"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+# Ship the PEP 561 marker so downstream type-checkers (mypy, pyright)
+# trust our type hints. The marker lives at src/llmhq_promptops/py.typed.
+llmhq_promptops = ["py.typed"]
