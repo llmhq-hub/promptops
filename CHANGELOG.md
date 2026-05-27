@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-05-27
+
+Patch release. Phase 1.5b's first batch: docs + demo + a resolver bug discovered while smoke-testing the demo.
+
+### Added (Phase 1.5b — M6: Incident-archaeology sample repo)
+- New `examples/incident-archaeology-demo/` directory with `setup.sh` that builds `/tmp/promptops-demo` as a fresh git repo with deterministic pre-baked history (5 prompt commits + 4 deploy events spanning 2026-05-15 → 2026-05-24). Backdates via `GIT_AUTHOR_DATE`/`GIT_COMMITTER_DATE` so the demo timeline is the same regardless of when the script runs. Idempotent — re-running rebuilds from scratch.
+- Three sample prompts (`summarizer`, `intent-classifier`, `refund-resolver`) with realistic, lightly-evolving content across the timeline so blame queries return meaningful diffs.
+- `examples/incident-archaeology-demo/README.md` walks through the hero flow (`deploy list` → `blame --at <ts>` → `blame --at <ts> --prompt <id>` → `snapshot build`) with an ASCII timeline so users can predict what each query resolves to.
+
+### Added (Phase 1.5b — M7: Scripted screencast)
+- New `examples/incident-archaeology-demo/screencast.sh` — 60-second regenerable walkthrough. Color-coded prompts, sleeps between steps, recording instructions in the header (`asciinema rec`, `agg` for GIF). `PAUSE=1 ./screencast.sh` runs faster for CI smoke testing.
+
+### Changed (Phase 1.5b — M8: README + URL fix)
+- **Fixed:** `pyproject.toml [project.urls]` pointed at `github.com/llmhq-hub/llmhq-promptops` (with a spurious `llmhq-` prefix) — broken since at least v0.2.0. Now resolves to the actual repo at `github.com/llmhq-hub/promptops`. PyPI Homepage / Documentation / Repository / Issues / Changelog links work again.
+- README rewritten per D10/D11 from the original DX plan: new tagline (*"Git blame for prompts..."*), Key Features reordered to lead with v0.3.0 hero surface (blame, snapshot, deploy log), dual Quick Start (Path A: 60-second demo via the sample repo; Path B: try it on your own repo).
+- Stale prod placeholder URLs (`your-org/llmhq-promptops`) replaced everywhere with the correct `github.com/llmhq-hub/promptops`.
+
+### Fixed (Phase 1.5b — M5c: Resolver multi-prompt blame)
+- `GitVersioning._resolve_version_to_commit` previously only walked the prompt's own commit history, so resolving prompt A at a commit that only touched prompt B failed with "not found" — even though prompt A existed at that commit unchanged. This made `promptops blame` fail for any prompt not directly modified by the deploy commit (i.e. most prompts in any realistic deploy). Discovered while smoke-testing the M6 demo, where 2 of 3 prompts failed to resolve at the demo's hero-query timestamp.
+- Fix: after the prompt-history walk, fall back to `Repo.commit(version)` so any valid git ref (full SHA, prefix, tag name, `HEAD~N`) resolves. `get_prompt_at_version`'s `commit.tree[path]` lookup already handles "file existed at that commit but wasn't changed by it" cleanly. Net effect: `promptops blame` now resolves every prompt that existed at the deploy commit, not just ones that were directly touched.
+
+### Tests
+- 4 new regression tests in `tests/test_git_versioning.py::TestResolveAtUnrelatedCommit`: resolve at commit that only touched another prompt (the actual bug), resolve at full SHA, resolve at 7-char SHA prefix (was previously rejected), invalid refs still return None.
+- Demo `setup.sh` smoke-tested end-to-end: pre-fix resolved 1 of 3 prompts at the hero timestamp, post-fix resolves 3 of 3.
+- 220 tests pass in dev (was 216 in v0.3.0). Zero regressions across M1–M5b.
+
+### Deferred to v0.4.0
+- D9 from the original M8 spec (`promptops init repo` defaulting to `--no-hooks` so hooks become a deliberate second step via `promptops hooks install`). Held out of v0.3.1 because it's a backwards-incompatible default change inappropriate for a patch release.
+
 ## [0.3.0] - 2026-05-27
 
 Phase 1.5a — Production Runtime + Incident Archaeology. Adds a pluggable Resolver layer, build-time snapshot support (Docker images without `.git/`), a deploy event log, and `promptops blame --at <timestamp>` for incident archaeology. Also fixes a long-standing bug where untagged commits returned a position-based fake semver, and ships a migration tool for users moving off that behavior. Plus a pre-existing version-string desync (`__version__` was stuck at "0.1.0" while the package shipped as 0.2.0) is fixed here.
