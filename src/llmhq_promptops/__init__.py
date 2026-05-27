@@ -9,7 +9,7 @@ This package provides:
 - CLI tools for prompt management and testing
 """
 
-__version__ = "0.1.0"
+__version__ = "0.3.0"
 __author__ = "jision"
 __email__ = "jisionpc@gmail.com"
 
@@ -29,6 +29,23 @@ from .core.template import (
 
 from .core.git_versioning import GitVersioning
 
+from .core.resolver import (
+    Resolver,
+    ResolvedPrompt,
+    GitResolver,
+)
+
+from .core.deploys import (
+    DeployEvent,
+    DeployLog,
+)
+
+from .core.snapshot import (
+    SnapshotResolver,
+    AutoResolver,
+    write_snapshot,
+)
+
 # Future: Framework adapters will be added in later releases
 LANGCHAIN_AVAILABLE = False
 
@@ -36,18 +53,32 @@ LANGCHAIN_AVAILABLE = False
 __all__ = [
     # Core functionality
     "PromptManager",
-    "get_prompt", 
+    "get_prompt",
     "get_template",
     "get_prompt_manager",
-    
+
     # Template classes
     "PromptTemplate",
-    "PromptMetadata", 
+    "PromptMetadata",
     "VariableDefinition",
-    
+
     # Git integration
     "GitVersioning",
-    
+
+    # Resolver layer (Phase 1.5a M1)
+    "Resolver",
+    "ResolvedPrompt",
+    "GitResolver",
+
+    # Deploy event log (Phase 1.5a M4)
+    "DeployEvent",
+    "DeployLog",
+
+    # Snapshot + auto-resolver (Phase 1.5a M3)
+    "SnapshotResolver",
+    "AutoResolver",
+    "write_snapshot",
+
     # Constants
     "LANGCHAIN_AVAILABLE",
 ]
