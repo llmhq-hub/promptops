@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-05-27
+
+Pure PyPI-polish patch. No code changes, no behavior changes — just signals downstream tooling reads off PyPI metadata.
+
+### Added
+- `src/llmhq_promptops/py.typed` (PEP 561 marker). Downstream type-checkers (mypy, pyright, basedpyright) now trust the type hints we already ship throughout the public API. The marker is included in the wheel via a new `[tool.setuptools.package-data]` block in `pyproject.toml`.
+- `Typing :: Typed` classifier. The companion PyPI signal to the marker — surfaced on the project page next to the existing classifiers.
+
+### Changed
+- `Development Status` classifier bumped from `4 - Beta` to `5 - Production/Stable`. Two stable releases (v0.3.0, v0.3.1), 210 tests, a documented production runtime path (`AutoResolver` + snapshot), and an incident-archaeology hero flow shipped — the package is past Beta in practice. The PyPI badge now reflects that.
+
+### Not in this release (intentionally deferred)
+- Dropping Python 3.8 / 3.9 classifiers + bumping `requires-python` to `>=3.10`. That's a breaking change in semver terms (existing 3.8/3.9 users would suddenly fail to install the next version), so it batches into v0.4.0 alongside D9 (hooks-opt-in default change) and M9 (Tier 2 error codes).
+
 ## [0.3.1] - 2026-05-27
 
 Patch release. Phase 1.5b's first batch: docs + demo + a resolver bug discovered while smoke-testing the demo.
