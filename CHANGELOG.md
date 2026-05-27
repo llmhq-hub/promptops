@@ -17,6 +17,7 @@ Pure PyPI-polish patch. No code changes, no behavior changes — just signals do
 
 ### Changed
 - `Development Status` classifier bumped from `4 - Beta` to `5 - Production/Stable`. Two stable releases (v0.3.0, v0.3.1), 210 tests, a documented production runtime path (`AutoResolver` + snapshot), and an incident-archaeology hero flow shipped — the package is past Beta in practice. The PyPI badge now reflects that.
+- Classifier set expanded for PyPI discoverability. **Added** `Environment :: Console` (we're primarily a CLI), `Intended Audience :: System Administrators` (the incident-archaeology + deploy-event surface is ops territory), `Topic :: Software Development :: Build Tools` (`promptops snapshot build` literally is a build tool), `Topic :: Software Development :: Quality Assurance` (the test + eval surface), `Topic :: System :: Logging` (`.promptops/deploys.jsonl` is structured audit logging). **Removed** `Topic :: Text Processing :: Linguistic` — we manage prompt files as artifacts, not text-processing.
 
 ### Not in this release (intentionally deferred)
 - Dropping Python 3.8 / 3.9 classifiers + bumping `requires-python` to `>=3.10`. That's a breaking change in semver terms (existing 3.8/3.9 users would suddenly fail to install the next version), so it batches into v0.4.0 alongside D9 (hooks-opt-in default change) and M9 (Tier 2 error codes).
