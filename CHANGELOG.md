@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-06-09
+
+Hotfix release. Two changes that close a contradiction between the v0.3.0 marketing claim ("Production runtime without `.git/`") and what the convenience entry points actually did. No new features; no breaking changes for existing dev workflows.
+
+### Fixed
+
+- **Module-level `get_prompt()` / `get_prompt_manager()` now default to `AutoResolver`.** Before v0.3.3, `from llmhq_promptops import get_prompt` always constructed a `PromptManager` with no `resolver=` argument, which fell back to `GitResolver` and raised `ValueError("GitResolver requires a git repository")` in any production container that shipped only `.promptops/snapshot.json` (no `.git/`). The recommended one-liner from the README — `PromptManager(resolver=AutoResolver())` — worked, but the convenience helpers everyone discovers first did not. The fix wires `AutoResolver(repo_path=...)` into the default manager so the same import works in dev (uses git) and prod (uses snapshot). See [`prompt_manager.py:335-345`](src/llmhq_promptops/prompt_manager.py#L335-L345).
+
+- **`PromptManager._validate_setup` no longer hard-requires `.promptops/prompts/`.** A real production Docker image ships only `snapshot.json`, not the YAML source tree. The previous check raised on init in that exact case. Now the validation accepts either `.promptops/prompts/` (dev) or `.promptops/snapshot.json` (prod) — at least one must be present. The error message lists both initialization paths when neither is found. See [`prompt_manager.py:54-77`](src/llmhq_promptops/prompt_manager.py#L54-L77).
+
+### Tests
+
+- New regression class `TestModuleLevelGetPromptInProduction` in `tests/test_auto_resolver.py` exercising the realistic Docker layout (`snapshot.json` only, no `.git/`, no `prompts/`). Three tests pin: `get_prompt` returns rendered output, `get_prompt_manager` returns an `AutoResolver`-backed manager in `snapshot` mode, and `get_template` works through the same path.
+
+- New file `tests/test_package_metadata.py`. Asserts `llmhq_promptops.__version__ == importlib.metadata.version("llmhq-promptops")` so the v0.1.0→0.2.0 `__version__` desync class of bugs (called out in the v0.3.0 release notes) cannot recur silently. Also asserts the public API surface in `__all__` stays exported and importable.
+
+### Not in this release (intentionally deferred to v0.4.0)
+
+- The full set of P2 cleanup items surfaced alongside this hotfix (narrow render exceptions, deploy-log perf cache, deploy-event size validation, `AutoResolver` startup log line, stale `TECHNICAL_PLAN.md` removal, return-not-None pytest warnings). Batched with the existing v0.4.0 queue (D9 hooks-opt-in flip, M9 Tier 2 error codes, Python 3.8/3.9 deprecation) so the breaking-change envelope is opened exactly once.
+
 ## [0.3.2] - 2026-05-27
 
 Pure PyPI-polish patch. No code changes, no behavior changes — just signals downstream tooling reads off PyPI metadata.
