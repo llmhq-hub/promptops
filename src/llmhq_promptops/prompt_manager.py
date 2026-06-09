@@ -52,7 +52,14 @@ class PromptManager:
         self._validate_setup()
 
     def _validate_setup(self):
-        """Validate directory layout. Backend validation lives in the Resolver."""
+        """Validate directory layout. Backend validation lives in the Resolver.
+
+        Two valid layouts:
+          - Dev / source-of-truth: ``.promptops/prompts/`` exists (YAML source).
+          - Production runtime: ``.promptops/snapshot.json`` exists (frozen
+            artifact in a Docker image, no ``prompts/`` directory needed).
+        At least one must be present.
+        """
         if not self.promptops_dir.exists():
             raise ValueError(
                 f"PromptOps not initialized at {self.repo_path}. "
@@ -60,8 +67,15 @@ class PromptManager:
             )
 
         prompts_dir = self.promptops_dir / "prompts"
-        if not prompts_dir.exists():
-            raise ValueError(f"Prompts directory not found: {prompts_dir}")
+        snapshot_path = self.promptops_dir / "snapshot.json"
+        if not prompts_dir.exists() and not snapshot_path.exists():
+            raise ValueError(
+                f"PromptOps directory at {self.promptops_dir} has neither "
+                f"a 'prompts/' directory (dev source) nor a 'snapshot.json' "
+                f"(production artifact). Initialize prompts with "
+                f"'promptops init repo' or build a snapshot with "
+                f"'promptops snapshot build'."
+            )
     
     def get_prompt(self, prompt_reference: str, variables: Dict[str, Any] = None) -> str:
         """Get and render a prompt by reference.
@@ -333,10 +347,24 @@ _default_manager = None
 
 
 def get_prompt_manager(repo_path: str = ".") -> PromptManager:
-    """Get or create the default PromptManager instance."""
+    """Get or create the default PromptManager instance.
+
+    The default manager is constructed with ``AutoResolver`` so the same
+    code works in dev (with ``.git/``) and prod (with
+    ``.promptops/snapshot.json``). To use a specific resolver, construct
+    ``PromptManager(resolver=...)`` directly instead of going through this
+    convenience helper.
+    """
     global _default_manager
-    if _default_manager is None or _default_manager.repo_path != Path(repo_path).resolve():
-        _default_manager = PromptManager(repo_path)
+    resolved_path = Path(repo_path).resolve()
+    if _default_manager is None or _default_manager.repo_path != resolved_path:
+        # Lazy import: callers who construct PromptManager(resolver=...)
+        # directly never need to pay the snapshot module import cost.
+        from .core.snapshot import AutoResolver
+
+        _default_manager = PromptManager(
+            repo_path, resolver=AutoResolver(repo_path=str(resolved_path))
+        )
     return _default_manager
 
 

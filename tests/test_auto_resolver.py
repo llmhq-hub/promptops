@@ -199,3 +199,93 @@ class TestPromptManagerWithAutoResolver:
         resolved = manager.resolve("hello")
         assert resolved.source == "snapshot"
         assert resolved.prompt_id == "hello"
+
+
+# ── R1 regression: module-level get_prompt in production ─────────────
+
+
+@pytest.fixture
+def docker_image_snapshot_only(repo_with_snapshot: Path, tmp_path: Path) -> Path:
+    """A realistic production Docker layout: snapshot.json only, no .git/,
+    no prompts/ source directory. This is what gets baked into the image
+    when CI runs ``promptops snapshot build`` and the image strips
+    everything else.
+    """
+    import shutil
+
+    target = tmp_path / "docker_root"
+    target.mkdir()
+    (target / ".promptops").mkdir()
+    # Ship ONLY snapshot.json. No .git/. No prompts/. This is the actual
+    # production-runtime case the v0.3.0 "Production runtime without .git/"
+    # claim promises.
+    shutil.copy(
+        repo_with_snapshot / ".promptops" / "snapshot.json",
+        target / ".promptops" / "snapshot.json",
+    )
+    assert not (target / ".git").exists()
+    assert not (target / ".promptops" / "prompts").exists()
+    return target
+
+
+class TestModuleLevelGetPromptInProduction:
+    """Regression for v0.3.3 hotfix.
+
+    Prior to v0.3.3, ``from llmhq_promptops import get_prompt`` always
+    constructed a ``GitResolver`` under the hood, so any production
+    container shipping only ``snapshot.json`` (no ``.git/``) raised
+    ``ValueError("GitResolver requires a git repository")`` on first
+    call. That contradicted the v0.3.0 marketing claim that snapshot.json
+    is sufficient for production runtime.
+
+    These tests pin the fix: the module-level convenience helpers go
+    through ``AutoResolver`` so the same import works in dev and prod.
+    """
+
+    def test_module_level_get_prompt_works_without_git(
+        self, docker_image_snapshot_only: Path
+    ):
+        # Reset the module-level cache so this test isolates from any
+        # prior test that may have warmed the global with a different path.
+        from llmhq_promptops import prompt_manager as pm_module
+
+        pm_module._default_manager = None
+
+        from llmhq_promptops import get_prompt
+
+        rendered = get_prompt(
+            "hello",
+            {"name": "ProdContainer"},
+            repo_path=str(docker_image_snapshot_only),
+        )
+        assert "ProdContainer" in rendered
+
+    def test_module_level_get_prompt_manager_uses_auto_resolver(
+        self, docker_image_snapshot_only: Path
+    ):
+        from llmhq_promptops import prompt_manager as pm_module
+
+        pm_module._default_manager = None
+
+        from llmhq_promptops import get_prompt_manager
+
+        manager = get_prompt_manager(str(docker_image_snapshot_only))
+        # The default manager must be using AutoResolver in snapshot mode,
+        # not GitResolver. Reach into _resolver to verify; this is the
+        # contract being pinned.
+        assert isinstance(manager._resolver, AutoResolver)
+        assert manager._resolver.mode == "snapshot"
+
+    def test_module_level_get_template_works_without_git(
+        self, docker_image_snapshot_only: Path
+    ):
+        from llmhq_promptops import prompt_manager as pm_module
+
+        pm_module._default_manager = None
+
+        from llmhq_promptops import get_template
+
+        template = get_template(
+            "hello", repo_path=str(docker_image_snapshot_only)
+        )
+        assert template is not None
