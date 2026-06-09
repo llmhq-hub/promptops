@@ -1,8 +1,9 @@
 # 🚀 llmhq-promptops
 
-[![PyPI version](https://badge.fury.io/py/llmhq-promptops.svg)](https://badge.fury.io/py/llmhq-promptops)
+[![PyPI version](https://img.shields.io/pypi/v/llmhq-promptops.svg)](https://pypi.org/project/llmhq-promptops/)
 [![Python Support](https://img.shields.io/pypi/pyversions/llmhq-promptops.svg)](https://pypi.org/project/llmhq-promptops/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Downloads](https://img.shields.io/pypi/dm/llmhq-promptops.svg)](https://pypi.org/project/llmhq-promptops/)
 
 **Git blame for prompts.** When prod breaks, know exactly which prompt version was running, in seconds. No SaaS, no vendor lock-in — all in your own git.
 
