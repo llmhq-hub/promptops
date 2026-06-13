@@ -23,9 +23,15 @@ This directory contains practical examples demonstrating how to use llmhq-prompt
    promptops create prompt user-onboarding
    ```
 
-4. **Run examples**
+4. **Run the examples**
+
+   `basic_usage.py` lives in the cloned repo, so run it from there (its
+   template-rendering and error-handling sections work in any directory;
+   the resolution sections expect a `welcome-message` prompt like the one
+   you just created):
    ```bash
-   python examples/basic_usage.py
+   git clone https://github.com/llmhq-hub/promptops.git
+   python promptops/examples/basic_usage.py
    ```
 
 ## 📋 Example Files
@@ -79,19 +85,21 @@ promptops create prompt user-onboarding
 
 ### Example Prompt Content
 
-**`.promptops/prompts/welcome-message.yaml`**
+**`.promptops/prompts/welcome-message.yaml`** — `promptops create prompt
+welcome-message` scaffolds a starter using `{{ user_input }}`; edit it to
+taste. (`basic_usage.py` resolves this prompt with a `user_input`
+variable.)
 ```yaml
-metadata:
+prompt:
   id: welcome-message
-  version: "1.0.0"
   description: "Welcome message for new users"
+  model: gpt-4-turbo
+  template: |
+    You are a helpful assistant.
 
-template: |
-  Hello {{ user_name }}!
-  Welcome to our platform.
-
+    {{ user_input }}
 variables:
-  user_name: {type: string, required: true}
+  user_input: {type: string, required: true}
 ```
 
 **`.promptops/prompts/user-onboarding.yaml`**
@@ -174,10 +182,13 @@ ls .promptops/prompts/
 
 **"Required variable not provided"**
 ```python
-# Check required variables
+# Check which variables a prompt requires. Note: get_template takes the
+# id and version as SEPARATE arguments (it does not parse "id:version"
+# like get_prompt does), and required vars come from the .variables dict.
 from llmhq_promptops import get_template
-template = get_template("prompt:working")
-print("Required:", template.required_variables)
+template = get_template("welcome-message", "working")
+required = [name for name, v in template.variables.items() if v.required]
+print("Required:", required)
 ```
 
 

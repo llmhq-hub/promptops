@@ -333,3 +333,40 @@ class TestSnapshotRoundTripWithGit:
         # But source identifies which backend resolved it
         assert sr.source == "snapshot"
         assert gr.source == "git"
+
+
+# ── v0.4.0 security hardening: read-side caps + RecursionError ──────
+
+
+class TestSnapshotReadSafety:
+    """S1 + S4 (v0.4.0): the production-runtime snapshot read path must
+    reject oversized and pathologically-nested files cleanly (E007),
+    never load multi-MB blobs into memory, never escape as a raw
+    traceback."""
+
+    def _write(self, d: Path, text: str) -> Path:
+        (d / ".promptops").mkdir(parents=True, exist_ok=True)
+        p = d / ".promptops" / SNAPSHOT_FILENAME
+        p.write_text(text)
+        return p
+
+    def test_oversized_snapshot_rejected(self, tmp_path: Path, monkeypatch):
+        from llmhq_promptops import PromptOpsError
+        from llmhq_promptops.core import snapshot as snap_mod
+
+        self._write(tmp_path, '{"schema_version": 1, "prompts": {}}')
+        # Shrink the ceiling rather than writing 25MB.
+        monkeypatch.setattr(snap_mod, "MAX_SNAPSHOT_BYTES", 5)
+        with pytest.raises(PromptOpsError, match="byte limit") as exc:
+            SnapshotResolver(repo_path=str(tmp_path))
+        assert exc.value.code == "PROMPTOPS_E007"
+
+    def test_deeply_nested_json_raises_clean_e007(self, tmp_path: Path):
+        from llmhq_promptops import PromptOpsError
+
+        # Deep nesting trips RecursionError inside json.loads; it must be
+        # caught and re-raised as E007, not crash with a raw traceback.
+        self._write(tmp_path, "[" * 100000 + "]" * 100000)
+        with pytest.raises(PromptOpsError) as exc:
+            SnapshotResolver(repo_path=str(tmp_path))
+        assert exc.value.code == "PROMPTOPS_E007"

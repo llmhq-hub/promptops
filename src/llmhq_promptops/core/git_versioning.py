@@ -87,7 +87,7 @@ class GitVersioning:
             return self._get_latest_commit_prompt(prompt_id)
         
         # Handle specific version tags (v1.2.3 format)
-        commit_sha = self._resolve_version_to_commit(prompt_id, version)
+        commit_sha = self.commit_for_version(prompt_id, version)
         if not commit_sha:
             return None
         
@@ -98,7 +98,7 @@ class GitVersioning:
         except (KeyError, Exception):
             return None
     
-    def _resolve_version_to_commit(self, prompt_id: str, version: str) -> Optional[str]:
+    def commit_for_version(self, prompt_id: str, version: str) -> Optional[str]:
         """Resolve a version string to a full git commit hash.
 
         Accepts any of:
@@ -135,7 +135,16 @@ class GitVersioning:
             return self.repo.commit(version).hexsha
         except Exception:
             return None
-    
+
+    def _resolve_version_to_commit(self, prompt_id: str, version: str) -> Optional[str]:
+        """Deprecated private alias for :meth:`commit_for_version`.
+
+        Kept for backwards compatibility — external code observed in the
+        wild (and our own v0.3.x resolver) reached into the private name.
+        New code should call ``commit_for_version``.
+        """
+        return self.commit_for_version(prompt_id, version)
+
     def _generate_version(self, commit, index: int, total: int, prompt_id: Optional[str] = None) -> str:
         """Resolve a commit to its version identifier.
 

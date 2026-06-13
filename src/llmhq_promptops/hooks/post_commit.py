@@ -117,9 +117,11 @@ class PostCommitHook:
                 if version:
                     tag_name = f"{prompt_id}-{version}"
                     
-                    # Check if tag already exists
+                    # Check if tag already exists ('--' so a crafted
+                    # tag_name can't inject a git option; the write path
+                    # below already uses it)
                     tag_exists = subprocess.run(
-                        ["git", "tag", "-l", tag_name],
+                        ["git", "tag", "-l", "--", tag_name],
                         capture_output=True,
                         text=True
                     ).stdout.strip()

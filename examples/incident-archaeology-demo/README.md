@@ -73,12 +73,20 @@ print(m.resolve('summarizer').version)
 ## Try the migration command
 
 ```bash
-# This demo's commits are untagged. blame works (via commit-<sha>),
-# but if you want real semver tags on history:
+# This demo's commits are untagged. blame already works (it resolves the
+# prompt at the deploy commit). If you want named semver tags on history
+# so you can reference a version directly, create them:
 promptops migrate tag-history --prompt summarizer --dry-run
 promptops migrate tag-history --prompt summarizer
 
-# Now the same blame call reports semver instead of commit-<sha>
+# The tags let you resolve a prompt by version name directly:
+promptops test runtest --prompt summarizer:v0.1.0 2>/dev/null || \
+  python -c "from llmhq_promptops import PromptManager; \
+print(PromptManager().resolve('summarizer:v0.1.0').text[:60])"
+
+# blame still answers by the *deploy commit* (that's what was actually
+# running), so it reports the deploy's commit reference — the tags are
+# for direct version lookups, not a rewrite of blame's output.
 promptops blame --at 2026-05-23T15:00:00Z --prompt summarizer
 ```
 

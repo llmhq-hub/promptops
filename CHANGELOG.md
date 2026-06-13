@@ -7,6 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-13
+
+The breaking-change batch. All six lanes (A–F) landed, plus a full pre-release review pass (product-bug, security, and docs-alignment fixes). See [`docs/migration-v0.3-to-v0.4.md`](docs/migration-v0.3-to-v0.4.md) for the upgrade guide covering every breaking change below.
+
+### Added (Lane B — M9: Tier 2 error system)
+- New `core/errors.py` with `PromptOpsError(code, message, hint, doc_url)`. Subclasses `ValueError`, so every pre-v0.4.0 `except ValueError` handler and `pytest.raises(ValueError, match=...)` assertion keeps working unchanged. `str(e)` renders `[PROMPTOPS_E0XX] message` + `Hint:` + `Docs:` lines; `to_dict()` gives a JSON-friendly shape for structured logging. **[BREAKING for exact-string consumers]** every upgraded error's message text now carries the `[PROMPTOPS_E0XX]` prefix and trailing `Hint:`/`Docs:` lines. `except ValueError` and substring/`match=` checks are unaffected; downstream code that compares error messages by *exact equality* or parses them by fixed offset must update.
+- 17-code registry (`PROMPTOPS_E001`–`E017`) documented in the new `docs/error-codes.md`. Each code has a stable meaning, a "when you'll see it" section, and a fix. E012 is reserved for the planned Jinja2-include build scan.
+- 20 raise sites upgraded across `prompt_manager.py`, `core/resolver.py`, `core/snapshot.py`, `core/validation.py`, `core/deploys.py`, and the `blame` CLI (which now surfaces `PROMPTOPS_E011` with the backfill hint on an empty deploy log — the empty-state spec from the Phase 1.5a eng review).
+- `PromptOpsError` exported from the package root: `from llmhq_promptops import PromptOpsError`.
+- 26 new tests in `tests/test_errors.py`, including a registry-sync layer that fails if `docs/error-codes.md` and `core/errors.py` ever drift (every constant documented, every documented code defined, no duplicate values).
+
+### Changed (Lane A — D9: hooks become opt-in) **[BREAKING]**
+- `promptops init repo` no longer installs git hooks by default. It creates the `.promptops/` directory tree + a default `config.yaml` and never touches `.git/hooks/` unless `--with-hooks` is passed. Enabling automatic versioning is now a deliberate second step: `promptops hooks install`. Rationale: `init` is the first command every new user runs; silently writing into `.git/hooks/` on first contact is a trust violation for exactly the architect persona the tool targets. The README has documented this two-step model since v0.3.1 — the code now matches.
+- `promptops init repo` is now idempotent on config: re-running it never clobbers an existing `.promptops/config.yaml`.
+- `--with-hooks` keeps the old behavior available explicitly (interactive config questions included); `--no-hooks` remains accepted as the now-redundant opt-out spelling.
+- 8 new tests in `tests/test_init_cli.py` pin the contract: default init leaves `.git/hooks/` untouched, points at `promptops hooks install`, preserves user config on re-run; `--with-hooks --non-interactive` installs both hooks.
+
+### Changed (Lane C — deploy log performance + integrity) **[BREAKING: iteration order + find_at tie-break]**
+- `DeployLog` reads are now cached per `(mtime_ns, size)` of the underlying file and `find_at` binary-searches a lazily-built per-env timestamp index — O(log n) per query instead of a full-file scan + re-parse on every call. A `blame` against a years-old log costs one parse, not one per query.
+- New `DeployLog.read()` → `DeployLogRead(events, skipped_lines)` public API. Malformed lines are still skipped (a corrupted line must not kill the audit log) but never silently: the count and 1-based line numbers are reported, and `promptops blame` now prints a warning naming the affected lines before showing its answer — closing the worst silent-failure mode in the hero command.
+- `DeployEvent` serialized-size cap (`MAX_EVENT_BYTES`, 4000) is enforced on the **append path** (`DeployLog.append`), where the POSIX `O_APPEND`-under-`PIPE_BUF` atomicity guarantee actually lives — not at construction. A `DeployEvent` is a valid value object at any size; only appending one relies on atomicity. This means a valid pre-cap event already on disk still parses on read instead of being misreported as malformed. Oversized lines on read are skipped-and-counted (they can't have been written atomically), never crash the read.
+- **[BREAKING]** `DeployLog.iter_events()` / `all_events()` / `events_for_env()` now yield events in **timestamp order** (was file order). Identical for normally-appended logs; the documented contract for backfilled/merged ones. Any consumer that assumed strict file order must adjust (none in this codebase do — all are order-independent).
+- **[BREAKING]** `find_at` tie-break on equal timestamps now returns the **last** file-order event (was the first), matching append-only "latest wins" semantics.
+- `DeployEvent.commit` is now validated as a 7–64 char hex git SHA at construction (security: deploy commits flow into blame's resolver). Real git SHAs always pass; non-hex placeholders no longer construct.
+- Read-path safety: a `(FileNotFoundError)` between `exists()`/`stat()`/`open()` no longer leaks a raw traceback; a deleted/rotated log invalidates the cache (no more ghost answers from `find_at`); a 50 MB whole-log ceiling (`MAX_DEPLOY_LOG_BYTES`) blocks a runaway/poisoned `deploys.jsonl` from OOM-ing CI; the per-env index build is thread-race-safe (returns a local, never `KeyError`s under concurrent `read()`).
+- 24 new tests across `tests/test_deploys.py` + `tests/test_blame_cli.py`: size caps (event + whole-log), commit-SHA validation, skip accounting, cache hit/invalidation across appends and **after deletion**, out-of-order (backfilled) logs, 1000-event scale sanity, and blame-CLI warning + git-preference behavior.
+
+### Changed (Lane D — resolver polish)
+- `GitVersioning.commit_for_version(prompt_id, version)` is now public API (promoted from `_resolve_version_to_commit`, which remains as a deprecated alias). `GitResolver` no longer reaches into a private method — the M5c fallback behavior is a documented contract now.
+- `AutoResolver` logs one INFO line at construction naming the chosen backend — `snapshot mode (path, built <ts> from commit <sha>)` or `git mode (path)`. When the resolver picks the "wrong" backend (stale snapshot in dev, unexpected git fallback), this line is the first thing that explains why. Closes the S5/D12 startup-log gap from the DX review.
+- 2 new tests assert both log lines via `caplog`.
+
+### Changed (Lane E — PromptManager correctness) **[BREAKING]**
+- Render/parse error handling narrowed (was `except Exception`): rendering catches only Jinja2's `TemplateError` family + the template's own `ValueError`; parsing catches YAML/schema/shape errors. A bug in a user-passed object (e.g. a broken `__str__`) now propagates with its real type and traceback instead of masquerading as a prompt error.
+- `get_prompt_diff` raises `PromptOpsError` (E003, naming the missing version) instead of returning an `{"error": ...}` dict. Callers no longer need to remember to check for the key; both CLI consumers updated.
+- Working-tree versions (`None`, `unstaged`, `working-dir`, `staged`) bypass the template cache when the resolver reads mutable state — editing a prompt on disk is now visible on the very next `get_prompt()` call in dev, no `refresh()` needed. Resolvers declare cache-safety via a new `reads_working_tree` attribute (`GitResolver`: True, `SnapshotResolver`: False, `AutoResolver`: delegates), so frozen snapshot-backed production keeps caching everything. **Perf note:** in git mode this makes each no-version `get_prompt('id')` re-read the working tree (~2 ms incl. one `git show`) instead of hitting the cache (~0.3 µs). That's the right trade for dev freshness, but don't run hot loops (e.g. a 100k-iteration eval) against a git-mode checkout — build a snapshot (`reads_working_tree=False` keeps full caching) or pin an immutable version.
+- 8 new tests in `tests/test_prompt_manager_v040.py`.
+
+### Changed (Lane F — housekeeping) **[BREAKING]**
+- `requires-python` bumped to `>=3.10`; Python 3.8/3.9 classifiers dropped. Both versions are past end-of-life; 3.10 is the new floor.
+- `TECHNICAL_PLAN.md` (391 lines, written mid-2025, pre-Phase-1.5) replaced with a short redirect to README/CHANGELOG/WORKFLOWS — a stale plan actively misleads evaluating architects.
+- New TTIA budget regression test: `blame --at` over 100 prompt commits + 200 deploy events must answer well inside the documented 30-second budget (asserted at 10s for CI headroom) — catches accidental quadratic blowups in the deploy-log or resolver path.
+- All 14 `PytestReturnNotNoneWarning` warnings eliminated. The legacy script-style tests (`test_sdk.py`, `test_versioning.py`, `test_git_hooks.py`, `test_langchain.py`) returned booleans that pytest silently counted as passing — including the `False` ones. They now assert through thin wrappers and **skip honestly** (with a reason) when their precondition is missing: an initialized `.promptops/` workspace, or the not-yet-shipped LangChain adapter. Test counts now tell the truth: 272 passed, 14 skipped, 0 warnings.
+
+### Fixed (pre-release review pass — product bugs)
+- **`promptops blame` no longer breaks after `promptops snapshot build`.** blame is incident archaeology — it resolves prompts at *arbitrary historical deploy commits*. A snapshot is frozen at one build commit, so `AutoResolver`'s default snapshot-preference made blame fail with `PROMPTOPS_E004` at every other commit once a snapshot existed in the repo. blame now prefers git whenever `.git/` is present; the snapshot is used only in a snapshot-only runtime.
+- **`DeployLog.find_at` no longer returns ghost events after the log is deleted/rotated** in a long-lived process. The absent-file state is now cached under a sentinel that invalidates the prior read and its per-env index. (Reproduced: `all_events()` said empty while `find_at()` still answered from the deleted file.)
+- **`promptops render prompt` handles both prompt schemas.** It previously read `prompt_data["prompt"]["template"]` (legacy `prompt:` layout only) and crashed with a raw `KeyError` on the `metadata:` layout the README documents. It now routes through `PromptTemplate`, which parses both and renders in the sandbox.
+
+### Changed (pre-release review pass — CLI ergonomics) **[BREAKING: `create prompt` signature]**
+- **`promptops create prompt <id>` now takes the id as a positional argument** and `--description` / `--model` / `--template-file` are all optional. With no `--template-file` it scaffolds a renderable starter template (auto-detecting variables), so the README's `promptops create prompt user-onboarding` works as written. A `--force` flag guards overwrites. *Migration:* replace `create prompt --prompt-id X --description ... --template-file ...` with `create prompt X [--description ...] [--template-file ...]`.
+- Removed two dead duplicate command definitions (`status`, `diff`) in `cli/commands/test.py` — the earlier copies were shadowed by later registrations and never ran.
+
+### Security (pre-release review pass)
+- Read-side size ceilings added to `snapshot.json` (`MAX_SNAPSHOT_BYTES`, 25 MB) and `deploys.jsonl` (`MAX_DEPLOY_LOG_BYTES`, 50 MB). Both files are committed to the repo and thus appendable by any PR contributor; the caps mirror the existing 1 MB single-prompt cap and prevent an oversized/poisoned file from OOM-ing the production runtime or CI.
+- `SnapshotResolver` now catches `RecursionError` (deeply-nested JSON) and re-raises as a clean `PROMPTOPS_E007` instead of escaping as a raw traceback.
+- `DeployEvent.commit` is validated as a git SHA (see Lane C) — closes the unvalidated-commit → blame-resolver path.
+- `GitPython` floor bumped `>=3.1.0` → `>=3.1.41` (the `>=3.1.0` floor predated the fixes for CVE-2022-24439 / CVE-2023-40267 / CVE-2023-41040; a fresh install could resolve a vulnerable version).
+- `git tag -l` existence checks in `hooks/post_commit.py` now pass `--` so a crafted tag name can't inject a git option.
+
+### Fixed (pre-release review pass — docs ↔ code alignment)
+- Error hints no longer name nonexistent commands. `promptops list versions <id>` → `promptops test status`; `promptops test prompt <id>` → `promptops test runtest --prompt <id>`. Fixed at every raise site and in `docs/error-codes.md`.
+- README: Python floor corrected to **3.10+** (was "3.8+", contradicting `pyproject`); dead `typing_extensions` dependency removed; Quick Start Path B commands corrected (`create prompt <id>`, `blame --at now`, `test runtest --prompt`); Key Features + Automated Versioning sections now state hooks are opt-in; prompt-schema example fixed (`models:` nested under `metadata:`, both schema forms shown).
+- `pyproject` description rewritten around the hero positioning ("Git blame for prompts…"); keywords expanded (incident-archaeology, observability, llmops); Python 3.13 classifier added.
+- `WORKFLOWS.md` rewritten against the current CLI (adds the entire v0.3.0+ hero surface — deploy/snapshot/blame/backfill/migrate — fixes the broken `create`/`runtest` invocations, documents hooks-opt-in, and replaces the known-broken copy-script deploy instructions).
+- Demo README's migration section corrected: tag-history creates named version tags for direct lookup; blame still answers by deploy commit (there is no sha→tag rewrite of blame output).
+
 ## [0.3.3] - 2026-06-09
 
 Hotfix release. Two changes that close a contradiction between the v0.3.0 marketing claim ("Production runtime without `.git/`") and what the convenience entry points actually did. No new features; no breaking changes for existing dev workflows.

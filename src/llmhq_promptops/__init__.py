@@ -9,7 +9,7 @@ This package provides:
 - CLI tools for prompt management and testing
 """
 
-__version__ = "0.3.3"
+__version__ = "0.4.0"
 __author__ = "jision"
 __email__ = "jisionpc@gmail.com"
 
@@ -38,6 +38,7 @@ from .core.resolver import (
 from .core.deploys import (
     DeployEvent,
     DeployLog,
+    DeployLogRead,
 )
 
 from .core.snapshot import (
@@ -45,6 +46,8 @@ from .core.snapshot import (
     AutoResolver,
     write_snapshot,
 )
+
+from .core.errors import PromptOpsError
 
 # Future: Framework adapters will be added in later releases
 LANGCHAIN_AVAILABLE = False
@@ -73,11 +76,15 @@ __all__ = [
     # Deploy event log (Phase 1.5a M4)
     "DeployEvent",
     "DeployLog",
+    "DeployLogRead",
 
     # Snapshot + auto-resolver (Phase 1.5a M3)
     "SnapshotResolver",
     "AutoResolver",
     "write_snapshot",
+
+    # Tier 2 error system (M9, v0.4.0)
+    "PromptOpsError",
 
     # Constants
     "LANGCHAIN_AVAILABLE",

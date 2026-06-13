@@ -6,7 +6,7 @@ import yaml
 import typer
 import sys
 from pathlib import Path
-from jinja2 import Template
+from jinja2.sandbox import SandboxedEnvironment
 from typing import List, Optional
 from io import StringIO
 
@@ -16,144 +16,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from llmhq_promptops import get_prompt, PromptManager
 
 app = typer.Typer()
-
-@app.command()
-def status():
-    """
-    Show status of all prompts and their versions.
-    
-    Displays which prompts have uncommitted changes, current versions,
-    and helpful guidance on which version references to use.
-    """
-    try:
-        manager = PromptManager()
-        
-        # Get all prompt files
-        prompts_dir = Path(".promptops/prompts")
-        if not prompts_dir.exists():
-            typer.echo("❌ No .promptops/prompts directory found. Run 'promptops init repo' first.", err=True)
-            raise typer.Exit(1)
-        
-        prompt_files = list(prompts_dir.glob("*.yaml"))
-        
-        if not prompt_files:
-            typer.echo("ℹ️  No prompt files found in .promptops/prompts/")
-            return
-        
-        typer.echo("🔍 PromptOps Status Overview:")
-        typer.echo("=" * 50)
-        
-        for prompt_file in sorted(prompt_files):
-            prompt_id = prompt_file.stem
-            _show_prompt_status(manager, prompt_id)
-        
-        typer.echo("\n💡 Usage Tips:")
-        typer.echo("   • Use :unstaged to test uncommitted changes")
-        typer.echo("   • Use :working for latest committed version")
-        typer.echo("   • Use :v1.2.3 for specific versions")
-        typer.echo("   • No version suffix uses smart default")
-        
-    except Exception as e:
-        typer.echo(f"❌ Failed to get status: {e}", err=True)
-        raise typer.Exit(1)
-
-
-def _show_prompt_status(manager: PromptManager, prompt_id: str):
-    """Show status for a single prompt."""
-    try:
-        # Check if there are uncommitted changes
-        has_changes = manager.has_uncommitted_changes(prompt_id)
-        
-        # Get current version from working directory
-        try:
-            working_version = manager._get_template_cached(f"{prompt_id}:working").metadata.get('version', 'unknown')
-        except:
-            working_version = 'unknown'
-        
-        # Get unstaged version if different
-        unstaged_version = None
-        if has_changes:
-            try:
-                unstaged_version = manager._get_template_cached(f"{prompt_id}:unstaged").metadata.get('version', 'unknown')
-            except:
-                unstaged_version = 'unknown'
-        
-        # Display status
-        if has_changes:
-            if unstaged_version and unstaged_version != working_version:
-                typer.echo(f"📝 {prompt_id}: 🔄 Uncommitted changes ({working_version} → {unstaged_version})")
-                typer.echo(f"   💡 Test with: --prompt {prompt_id}:unstaged")
-            else:
-                typer.echo(f"📝 {prompt_id}: 🔄 Uncommitted changes (content modified)")
-                typer.echo(f"   💡 Test with: --prompt {prompt_id}:unstaged")
-        else:
-            typer.echo(f"📝 {prompt_id}: ✅ Up to date (v{working_version})")
-            typer.echo(f"   💡 Test with: --prompt {prompt_id}:working")
-        
-        # Show available tags
-        _show_available_versions(prompt_id)
-        
-    except Exception as e:
-        typer.echo(f"📝 {prompt_id}: ⚠️  Error checking status - {e}")
-
-
-def _show_available_versions(prompt_id: str):
-    """Show available git tags for a prompt."""
-    try:
-        import subprocess
-        result = subprocess.run(
-            ["git", "tag", "-l", f"{prompt_id}-*"],
-            capture_output=True,
-            text=True
-        )
-        
-        if result.returncode == 0 and result.stdout.strip():
-            tags = result.stdout.strip().split('\n')
-            versions = [tag.replace(f"{prompt_id}-", "") for tag in tags[-3:]]  # Show last 3
-            typer.echo(f"   🏷️  Recent versions: {', '.join(versions)}")
-        
-    except Exception:
-        pass  # Silently fail for git tag lookup
-
-# Register 'test' as a subcommand (not as a callback)
-@app.command()
-def diff(
-    prompt_id: str = typer.Argument(..., help="Prompt ID to compare"),
-    version1: str = typer.Option("working", "--version1", help="First version to compare"),
-    version2: str = typer.Option("unstaged", "--version2", help="Second version to compare")
-):
-    """
-    Compare two versions of a prompt.
-    
-    Shows the differences between two versions of a prompt.
-    Common comparisons:
-    - working vs unstaged (default): See uncommitted changes
-    - v1.2.0 vs v1.3.0: Compare specific versions
-    - working vs v1.2.0: See changes since a version
-    """
-    try:
-        manager = PromptManager()
-        
-        typer.echo(f"🔍 Comparing {prompt_id}: {version1} vs {version2}")
-        typer.echo("=" * 50)
-        
-        # Get both versions
-        try:
-            diff_result = manager.get_prompt_diff(prompt_id, version1, version2)
-            
-            if not diff_result.strip():
-                typer.echo("✅ No differences found between versions")
-            else:
-                typer.echo("📊 Differences:")
-                typer.echo(diff_result)
-                
-        except Exception as e:
-            typer.echo(f"❌ Failed to generate diff: {e}", err=True)
-            
-    except Exception as e:
-        typer.echo(f"❌ Diff failed: {e}", err=True)
-        raise typer.Exit(1)
-
 
 @app.command()
 def runtest(
@@ -418,12 +280,10 @@ def diff(
     try:
         manager = PromptManager()
         
+        # Raises PromptOpsError E003 on a missing version since v0.4.0;
+        # the outer except renders it and exits 1.
         diff_result = manager.get_prompt_diff(prompt, version1, version2)
-        
-        if "error" in diff_result:
-            typer.echo(f"❌ {diff_result['error']}", err=True)
-            raise typer.Exit(1)
-        
+
         typer.echo(f"🔍 Comparing {prompt}: {version1} vs {version2}")
         typer.echo("=" * 60)
         
@@ -440,82 +300,7 @@ def diff(
     except Exception as e:
         typer.echo(f"❌ Diff failed: {e}", err=True)
         raise typer.Exit(1)
-    
-    # Load the test cases from the JSON dataset.
-    test_cases = load_json_test_cases(dataset)
-    results = []
-    total_latency = 0.0
-    success_count = 0
-    total_tests = len(test_cases)
 
-    for idx, test_case in enumerate(test_cases):
-        if not isinstance(test_case, dict):
-            typer.echo(f"Error: Test case {idx} is not a valid object.")
-            continue
-
-        test_input = test_case.get("input")
-        expected_output = test_case.get("expected_output")
-
-        if test_input is None or expected_output is None:
-            typer.echo(f"Error: Test case {idx} is missing 'input' or 'expected_output' keys.")
-            continue
-
-        start_time = time.time()
-        try:
-            actual_output = run_prompt_test(prompt_file, test_input)
-        except Exception as e:
-            typer.echo(f"Test case {idx} failed with error: {e}")
-            continue
-        latency = time.time() - start_time
-        total_latency += latency
-        passed = accuracy_match(actual_output, expected_output)
-        if passed:
-            success_count += 1
-        
-        results.append({
-            "test_index": idx,
-            "input": test_input,
-            "expected_output": expected_output,
-            "actual_output": actual_output,
-            "latency": latency,
-            "passed": passed
-        })
-
-    # Generate a Markdown test report
-    date_str = datetime.datetime.now().strftime("%Y-%m-%d")
-    report_lines = [
-        f"# Test Report for Prompt '{prompt}' - {date_str}",
-        f"- Total tests run: {total_tests}",
-        f"- Success count: {success_count}",
-        f"- Average latency: {total_latency / total_tests:.2f} seconds" if total_tests > 0 else "",
-        "",
-        "## Detailed Test Results:",
-        ""
-    ]
-    
-    for res in results:
-        report_lines.append(f"### Test {res['test_index']}")
-        report_lines.append(f"- **Input:** {res['input']}")
-        report_lines.append(f"- **Expected Output:** {res['expected_output']}")
-        report_lines.append(f"- **Actual Output:** {res['actual_output']}")
-        report_lines.append(f"- **Latency:** {res['latency']:.2f} seconds")
-        report_lines.append(f"- **Passed:** {res['passed']}")
-        report_lines.append("")
-    
-    report_content = "\n".join(report_lines)
-    
-    # Save the report under .promptops/results/
-    results_dir = os.path.join(os.getcwd(), ".promptops", "results")
-    os.makedirs(results_dir, exist_ok=True)
-    report_file = os.path.join(results_dir, f"{date_str}-{prompt}-test-report.md")
-    try:
-        with open(report_file, "w") as f:
-            f.write(report_content)
-        typer.echo(f"Test report saved to {report_file}")
-    except Exception as e:
-        typer.echo(f"Error saving test report: {e}")
-    
-    typer.echo("\n" + report_content)
 
 def load_json_test_cases(json_file: str):
     """
@@ -563,7 +348,7 @@ def run_prompt_test(prompt_file: str, test_input: dict) -> str:
         raise typer.Exit(code=1)
     
     try:
-        template = Template(template_str)
+        template = SandboxedEnvironment().from_string(template_str)
     except Exception as e:
         typer.echo(f"Error creating Jinja2 template from prompt: {e}")
         raise typer.Exit(code=1)
