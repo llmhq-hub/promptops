@@ -14,7 +14,7 @@
 - **🔎 Incident archaeology** — `promptops blame --at <ts>` resolves "what prompt was running in prod at that moment" by composing the deploy log with git history.
 - **🐳 Production runtime without `.git/`** — `promptops snapshot build` writes a self-contained `.promptops/snapshot.json`. Ship that in your Docker image; `AutoResolver` picks it up automatically.
 - **📒 Deploy event log** — append-only `.promptops/deploys.jsonl` records every deploy with provenance (env, commit, actor, metadata). Committed to git alongside your prompts.
-- **🔄 Automated git versioning** — Pre-commit hook detects prompt changes, bumps semver in YAML metadata, re-stages.
+- **🔄 Automated git versioning** *(opt-in)* — after `promptops hooks install`, a pre-commit hook detects prompt changes, bumps semver in YAML metadata, and re-stages. `promptops init repo` never touches `.git/hooks/` on its own.
 - **📝 Version-aware testing** — `:unstaged`, `:working`, `:latest`, `commit-<sha>`, or any tag.
 - **🐍 Python SDK** — `PromptManager(resolver=AutoResolver())` works the same in dev (uses git) and prod (uses snapshot).
 
@@ -56,18 +56,21 @@ For when you want to add this to a real project.
 pip install llmhq-promptops
 
 cd <your-project>                # any git repo
-promptops init repo              # creates .promptops/ directory
-promptops hooks install          # opt-in: auto-version on commit
+promptops init repo              # creates .promptops/ (does NOT touch git hooks)
 
-# Write a prompt
+# Scaffold your first prompt → .promptops/prompts/user-onboarding.yaml
 promptops create prompt user-onboarding
 
-# Render it
-python -c "from llmhq_promptops import get_prompt; print(get_prompt('user-onboarding', {'name': 'World'}))"
+# Render it (the starter template uses {{ user_input }}; :unstaged reads
+# your uncommitted working-tree edits)
+python -c "from llmhq_promptops import get_prompt; print(get_prompt('user-onboarding:unstaged', {'user_input': 'World'}))"
 
 # Record a deploy and look it up later
 promptops deploy event --env prod -m release=v0.1.0
-promptops blame --at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+promptops blame --at now
+
+# Optional: enable auto-versioning on commit (opt-in since v0.4.0)
+promptops hooks install
 ```
 
 ## 📖 Usage Examples
@@ -172,17 +175,22 @@ Full help: `promptops --help` or `promptops <command> --help`.
 
 ## 📋 Prompt Schema
 
+PromptOps reads two interchangeable layouts. `promptops create prompt`
+scaffolds the compact `prompt:` form; the richer `metadata:` form below
+adds tags, multiple models, and inline tests. Both are parsed the same way.
+
+**Extended (`metadata:`) format:**
+
 ```yaml
 # .promptops/prompts/user-onboarding.yaml
 metadata:
   id: user-onboarding
-  version: "1.2.0"            # Auto-incremented by pre-commit hook
+  version: "1.2.0"            # auto-incremented once you run `promptops hooks install`
   description: "User onboarding welcome message"
   tags: ["onboarding", "welcome"]
-
-models:
-  default: gpt-4-turbo
-  supported: [gpt-4-turbo, claude-3-sonnet, llama2-70b]
+  models:                    # NOTE: nested under metadata
+    default: gpt-4-turbo
+    supported: [gpt-4-turbo, claude-3-sonnet, llama2-70b]
 
 template: |
   Welcome {{ user_name }}!
@@ -200,18 +208,34 @@ tests:
     metrics: {max_tokens: 150, min_relevance: 0.8}
 ```
 
+**Compact (`prompt:`) format** — what `promptops create prompt` generates:
+
+```yaml
+# .promptops/prompts/user-onboarding.yaml
+prompt:
+  id: user-onboarding
+  description: "User onboarding welcome message"
+  model: gpt-4-turbo
+  template: "Welcome {{ user_name }}!"
+variables:
+  user_name: {type: string, required: true}
+```
+
 ## 🔄 Automated Versioning
 
-Semantic version rules applied by the pre-commit hook:
+Automated versioning is **opt-in** — enable it once per repo with
+`promptops hooks install`. (Since v0.4.0, `promptops init repo` never
+modifies `.git/hooks/` on its own.) After that, semantic version rules
+applied by the pre-commit hook:
 
 - **PATCH** (1.0.0 → 1.0.1) — template content changes only
 - **MINOR** (1.0.0 → 1.1.0) — new variables added (backwards compatible)
 - **MAJOR** (1.0.0 → 2.0.0) — required variables removed (breaking change)
 
-**Workflow:**
+**Workflow** (after `promptops hooks install`):
 
 1. Edit a prompt → changes in working tree
-2. `promptops test --prompt name:unstaged` (test before commit)
+2. `promptops test runtest --prompt name:unstaged` (test before commit)
 3. `git add` + `git commit` → pre-commit hook bumps version and re-stages
 4. Post-commit hook tags the new version and generates a changelog entry
 
@@ -229,14 +253,13 @@ Zero manual version management.
 
 ## 🛠️ Requirements
 
-- Python 3.8+
+- Python 3.10+
 - Git (for versioning at dev time — **not** required at production runtime if you ship `snapshot.json`)
 - YAML + Jinja2 (auto-installed)
 
 ## 📚 Dependencies
 
 - **Core:** Typer (CLI), Jinja2 (templates), PyYAML (parsing), GitPython (git access)
-- **Compatibility:** typing_extensions (Python 3.8)
 
 ## 🤝 Contributing
 
@@ -249,7 +272,7 @@ python -m venv venv
 source venv/bin/activate
 pip install -e .
 pip install pytest
-pytest tests/ --ignore=tests/test_versioning.py --ignore=tests/test_langchain.py
+pytest tests/
 ```
 
 ## 📄 License

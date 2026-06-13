@@ -18,6 +18,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional, Protocol, runtime_checkable
 
+from .errors import (
+    E003_PROMPT_NOT_FOUND,
+    E005_GIT_REQUIRED,
+    PromptOpsError,
+)
 from .git_versioning import GitVersioning
 from .validation import validate_prompt_id
 
@@ -83,14 +88,25 @@ class GitResolver:
     Raises ValueError on initialization if the path is not a git repo.
     """
 
+    # Working-tree versions (None/unstaged/staged) read mutable disk
+    # state — PromptManager bypasses its template cache for them.
+    reads_working_tree = True
+
     def __init__(self, repo_path: str = "."):
         self.repo_path = Path(repo_path).resolve()
         self._git = GitVersioning(repo_path)
         if not self._git.is_git_repo():
-            raise ValueError(
-                f"GitResolver requires a git repository. "
-                f"{self.repo_path} is not one. "
-                f"Initialize git first or use a different resolver."
+            raise PromptOpsError(
+                code=E005_GIT_REQUIRED,
+                message=(
+                    f"GitResolver requires a git repository. "
+                    f"{self.repo_path} is not one."
+                ),
+                hint=(
+                    "Initialize git first ('git init'), or use "
+                    "SnapshotResolver/AutoResolver in environments without "
+                    ".git/ (e.g. production containers shipping snapshot.json)."
+                ),
             )
 
     def resolve(self, prompt_id: str, version: Optional[str] = None) -> ResolvedPrompt:
@@ -99,9 +115,17 @@ class GitResolver:
         text = self._git.get_prompt_at_version(prompt_id, version)
         if text is None:
             available = self._git.list_available_prompts()
-            raise ValueError(
-                f"Prompt '{prompt_id}' not found at version '{version or 'default'}'. "
-                f"Available prompts: {available}"
+            raise PromptOpsError(
+                code=E003_PROMPT_NOT_FOUND,
+                message=(
+                    f"Prompt '{prompt_id}' not found at version "
+                    f"'{version or 'default'}'. Available prompts: {available}"
+                ),
+                hint=(
+                    "Check the prompt id spelling, or see available prompts "
+                    "with 'promptops test status'. If the prompt is new and "
+                    "uncommitted, resolve it with version ':unstaged'."
+                ),
             )
 
         commit_sha: Optional[str] = None
@@ -121,9 +145,9 @@ class GitResolver:
             commit_sha = None
             resolved_version = "staged"
         else:
-            # Specific version (v1.2.3 etc.). Private access to existing API;
-            # promote to public in a follow-up if more resolvers need it.
-            commit_sha = self._git._resolve_version_to_commit(prompt_id, version)
+            # Specific version (v1.2.3 etc.) via the public lookup
+            # (promoted from a private method in v0.4.0).
+            commit_sha = self._git.commit_for_version(prompt_id, version)
             resolved_version = version
 
         return ResolvedPrompt(

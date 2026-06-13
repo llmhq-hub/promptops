@@ -3,6 +3,12 @@
 import re
 from pathlib import Path
 
+from .errors import (
+    E010_INVALID_PROMPT_ID,
+    E013_INVALID_VERSION_SPEC,
+    PromptOpsError,
+)
+
 # Prompt IDs: alphanumeric, hyphens, underscores. Must start with alphanum.
 _PROMPT_ID_RE = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$')
 
@@ -23,12 +29,23 @@ def validate_prompt_id(prompt_id: str) -> str:
     Must start with an alphanumeric character. Max 128 chars.
     """
     if not prompt_id or not isinstance(prompt_id, str):
-        raise ValueError("prompt_id must be a non-empty string")
+        raise PromptOpsError(
+            code=E010_INVALID_PROMPT_ID,
+            message="prompt_id must be a non-empty string",
+            hint="Pass the prompt's id as defined in its YAML 'prompt.id' key.",
+        )
     if not _PROMPT_ID_RE.match(prompt_id):
-        raise ValueError(
-            f"Invalid prompt_id '{prompt_id}'. "
-            "Must match [a-zA-Z0-9][a-zA-Z0-9_-]{{0,127}} "
-            "(alphanumeric, hyphens, underscores; starts with alphanum)."
+        raise PromptOpsError(
+            code=E010_INVALID_PROMPT_ID,
+            message=(
+                f"Invalid prompt_id '{prompt_id}'. "
+                "Must match [a-zA-Z0-9][a-zA-Z0-9_-]{{0,127}} "
+                "(alphanumeric, hyphens, underscores; starts with alphanum)."
+            ),
+            hint=(
+                "Rename the prompt id to use only letters, digits, hyphens "
+                "and underscores, starting with a letter or digit."
+            ),
         )
     return prompt_id
 
@@ -40,14 +57,28 @@ def validate_version(version: str) -> str:
     (unstaged, working-dir, staged, working, latest, head).
     """
     if not version or not isinstance(version, str):
-        raise ValueError("version must be a non-empty string")
+        raise PromptOpsError(
+            code=E013_INVALID_VERSION_SPEC,
+            message="version must be a non-empty string",
+            hint=(
+                "Pass a semantic version (v1.2.3) or a keyword: "
+                f"{', '.join(sorted(_VERSION_KEYWORDS))}."
+            ),
+        )
     if version in _VERSION_KEYWORDS:
         return version
     if not _VERSION_RE.match(version):
-        raise ValueError(
-            f"Invalid version '{version}'. "
-            "Must be a semantic version (e.g. v1.2.3) or one of: "
-            f"{', '.join(sorted(_VERSION_KEYWORDS))}"
+        raise PromptOpsError(
+            code=E013_INVALID_VERSION_SPEC,
+            message=(
+                f"Invalid version '{version}'. "
+                "Must be a semantic version (e.g. v1.2.3) or one of: "
+                f"{', '.join(sorted(_VERSION_KEYWORDS))}"
+            ),
+            hint=(
+                "See each prompt's latest version with "
+                "'promptops test status'."
+            ),
         )
     return version
 

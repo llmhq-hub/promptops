@@ -289,3 +289,32 @@ class TestModuleLevelGetPromptInProduction:
             "hello", repo_path=str(docker_image_snapshot_only)
         )
         assert template is not None
+
+
+# ── v0.4.0 Lane D: startup resolution log line ──────────────────────
+
+
+class TestResolverStartupLog:
+    """One INFO line names the chosen backend + snapshot provenance."""
+
+    def test_snapshot_mode_logs_provenance(
+        self, repo_with_snapshot: Path, caplog
+    ):
+        import logging
+
+        with caplog.at_level(logging.INFO, logger="llmhq_promptops.core.snapshot"):
+            AutoResolver(repo_path=str(repo_with_snapshot))
+        messages = [r.getMessage() for r in caplog.records]
+        assert any(
+            "snapshot mode" in m and "built" in m for m in messages
+        ), f"expected snapshot-mode log line, got: {messages}"
+
+    def test_git_mode_logs_backend(self, git_only_repo: Path, caplog):
+        import logging
+
+        with caplog.at_level(logging.INFO, logger="llmhq_promptops.core.snapshot"):
+            AutoResolver(repo_path=str(git_only_repo))
+        messages = [r.getMessage() for r in caplog.records]
+        assert any("git mode" in m for m in messages), (
+            f"expected git-mode log line, got: {messages}"
+        )

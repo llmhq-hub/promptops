@@ -4,6 +4,17 @@ from typing import Dict, Any, Optional, List, Union
 from pathlib import Path
 from functools import lru_cache
 
+import yaml
+from jinja2 import TemplateError
+
+from .core.errors import (
+    E001_NOT_INITIALIZED,
+    E002_NO_PROMPT_SOURCE,
+    E003_PROMPT_NOT_FOUND,
+    E014_RENDER_FAILED,
+    E015_PARSE_FAILED,
+    PromptOpsError,
+)
 from .core.git_versioning import GitVersioning
 from .core.resolver import GitResolver, ResolvedPrompt, Resolver
 from .core.template import PromptTemplate
@@ -61,20 +72,26 @@ class PromptManager:
         At least one must be present.
         """
         if not self.promptops_dir.exists():
-            raise ValueError(
-                f"PromptOps not initialized at {self.repo_path}. "
-                f"Run 'promptops init repo' first"
+            raise PromptOpsError(
+                code=E001_NOT_INITIALIZED,
+                message=f"PromptOps not initialized at {self.repo_path}.",
+                hint="Run 'promptops init repo' first.",
             )
 
         prompts_dir = self.promptops_dir / "prompts"
         snapshot_path = self.promptops_dir / "snapshot.json"
         if not prompts_dir.exists() and not snapshot_path.exists():
-            raise ValueError(
-                f"PromptOps directory at {self.promptops_dir} has neither "
-                f"a 'prompts/' directory (dev source) nor a 'snapshot.json' "
-                f"(production artifact). Initialize prompts with "
-                f"'promptops init repo' or build a snapshot with "
-                f"'promptops snapshot build'."
+            raise PromptOpsError(
+                code=E002_NO_PROMPT_SOURCE,
+                message=(
+                    f"PromptOps directory at {self.promptops_dir} has neither "
+                    f"a 'prompts/' directory (dev source) nor a 'snapshot.json' "
+                    f"(production artifact)."
+                ),
+                hint=(
+                    "Initialize prompts with 'promptops init repo' or build a "
+                    "snapshot with 'promptops snapshot build'."
+                ),
             )
     
     def get_prompt(self, prompt_reference: str, variables: Dict[str, Any] = None) -> str:
@@ -97,23 +114,61 @@ class PromptManager:
         if variables is None:
             variables = {}
         
+        # Narrow catch (v0.4.0): only template-shaped failures become
+        # E014 — Jinja2's TemplateError family (syntax, undefined vars,
+        # sandbox violations) and the template's own ValueError for
+        # missing required variables. Anything else (a broken __str__ on
+        # a passed object, KeyboardInterrupt, ...) propagates raw with
+        # its real type and traceback.
         try:
             return template.render(variables)
-        except Exception as e:
+        except (TemplateError, ValueError) as e:
             self.logger.error(f"Failed to render prompt {prompt_reference}: {e}")
-            raise ValueError(f"Failed to render prompt {prompt_reference}: {e}")
+            raise PromptOpsError(
+                code=E014_RENDER_FAILED,
+                message=f"Failed to render prompt {prompt_reference}: {e}",
+                hint=(
+                    "Check that all required variables are provided and the "
+                    "Jinja2 template syntax is valid. "
+                    "'promptops test runtest --prompt <id>' validates a "
+                    "prompt locally."
+                ),
+            )
     
+    # Versions that read mutable working-tree state. Caching these made
+    # dev edit-then-rerun return stale text until refresh() — the classic
+    # first-session WTF. Immutable refs (semver tags, commit SHAs) and
+    # HEAD aliases stay cached; refresh() remains the escape hatch after
+    # a commit.
+    _UNCACHEABLE_VERSIONS = frozenset({None, "unstaged", "working-dir", "staged"})
+
     def get_template(self, prompt_id: str, version: Optional[str] = None) -> PromptTemplate:
         """Get PromptTemplate object for a prompt.
-        
+
         Args:
             prompt_id: Unique prompt identifier
             version: Version string (None for latest)
-            
+
         Returns:
             PromptTemplate instance
+
+        Note (v0.4.0): when the resolver reads mutable working-tree state
+        (git mode in dev), working-tree versions (``None``, ``unstaged``,
+        ``working-dir``, ``staged``) bypass the template cache so edits on
+        disk are visible immediately. Snapshot-backed resolvers are frozen
+        artifacts, so everything stays cached there; pinned versions are
+        cached everywhere.
         """
         cache_key = f"{prompt_id}:{version or 'latest'}"
+        if (
+            version in self._UNCACHEABLE_VERSIONS
+            # Resolvers declare mutability via `reads_working_tree`
+            # (GitResolver: True, SnapshotResolver: False, AutoResolver:
+            # delegates). Unknown custom resolvers default to True —
+            # favor correctness over cache hits.
+            and getattr(self._resolver, "reads_working_tree", True)
+        ):
+            return self._get_template_uncached(cache_key, prompt_id, version)
         return self._get_template_cached(cache_key, prompt_id, version)
     
     def _get_template_uncached(self, cache_key: str, prompt_id: str, version: Optional[str]) -> PromptTemplate:
@@ -126,11 +181,23 @@ class PromptManager:
         resolved = self._resolver.resolve(prompt_id, version)
         yaml_content = resolved.text
 
+        # Narrow catch (v0.4.0): YAML syntax errors, schema problems
+        # (missing template key → ValueError), and not-a-mapping shapes
+        # (scalar/list YAML → AttributeError/TypeError on .get). Real
+        # bugs propagate with their own type.
         try:
             return PromptTemplate(yaml_content)
-        except Exception as e:
+        except (yaml.YAMLError, ValueError, KeyError, TypeError, AttributeError) as e:
             self.logger.error(f"Failed to parse prompt {prompt_id}: {e}")
-            raise ValueError(f"Failed to parse prompt {prompt_id}: {e}")
+            raise PromptOpsError(
+                code=E015_PARSE_FAILED,
+                message=f"Failed to parse prompt {prompt_id}: {e}",
+                hint=(
+                    "The prompt YAML is malformed or missing required keys "
+                    "(prompt.id, prompt.template). Validate the file under "
+                    ".promptops/prompts/ against the schema in the README."
+                ),
+            )
 
     def resolve(self, prompt_reference: str) -> ResolvedPrompt:
         """Resolve a prompt to its raw content + provenance metadata.
@@ -263,46 +330,55 @@ class PromptManager:
     
     def get_prompt_diff(self, prompt_id: str, version1: str, version2: str) -> Dict[str, Any]:
         """Compare two versions of a prompt.
-        
+
         Args:
             prompt_id: Prompt identifier
             version1: First version to compare
             version2: Second version to compare
-            
+
         Returns:
             Dictionary with diff information
+
+        Raises:
+            PromptOpsError: (E003) when either version's content can't be
+                retrieved. Pre-v0.4.0 this returned an ``{"error": ...}``
+                dict instead — callers no longer need to remember to check
+                for that key.
         """
-        try:
-            content1 = self.git_versioning.get_prompt_at_version(prompt_id, version1)
-            content2 = self.git_versioning.get_prompt_at_version(prompt_id, version2)
-            
-            if content1 is None or content2 is None:
-                return {
-                    "error": f"Could not retrieve content for versions {version1} or {version2}",
-                    "version1_exists": content1 is not None,
-                    "version2_exists": content2 is not None
-                }
-            
-            # Simple line-by-line diff
-            lines1 = content1.split('\n')
-            lines2 = content2.split('\n')
-            
-            return {
-                "version1": version1,
-                "version2": version2,
-                "content1": content1,
-                "content2": content2,
-                "lines_added": len(lines2) - len(lines1),
-                "identical": content1.strip() == content2.strip(),
-                "summary": f"Comparing {version1} vs {version2}"
-            }
-            
-        except Exception as e:
-            return {
-                "error": f"Failed to compare versions: {e}",
-                "version1": version1,
-                "version2": version2
-            }
+        content1 = self.git_versioning.get_prompt_at_version(prompt_id, version1)
+        content2 = self.git_versioning.get_prompt_at_version(prompt_id, version2)
+
+        if content1 is None or content2 is None:
+            missing = [
+                v for v, c in ((version1, content1), (version2, content2))
+                if c is None
+            ]
+            raise PromptOpsError(
+                code=E003_PROMPT_NOT_FOUND,
+                message=(
+                    f"Cannot diff prompt '{prompt_id}': version(s) "
+                    f"{', '.join(repr(m) for m in missing)} not found."
+                ),
+                hint=(
+                    "See each prompt's latest version with "
+                    "'promptops test status', or use a working-tree ref "
+                    "like ':unstaged' / ':working'."
+                ),
+            )
+
+        # Simple line-by-line diff
+        lines1 = content1.split('\n')
+        lines2 = content2.split('\n')
+
+        return {
+            "version1": version1,
+            "version2": version2,
+            "content1": content1,
+            "content2": content2,
+            "lines_added": len(lines2) - len(lines1),
+            "identical": content1.strip() == content2.strip(),
+            "summary": f"Comparing {version1} vs {version2}"
+        }
     
     def list_prompt_statuses(self) -> Dict[str, Dict[str, Any]]:
         """Get status information for all prompts."""

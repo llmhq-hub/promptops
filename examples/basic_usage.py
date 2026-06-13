@@ -2,102 +2,112 @@
 """
 Basic Usage Examples for llmhq-promptops
 
-This script demonstrates the core functionality of the llmhq-promptops SDK
-including prompt resolution, version references, and basic testing.
+Demonstrates the core SDK: prompt resolution with version references,
+the PromptManager API, template rendering, and the v0.4.0 PROMPTOPS_E0XX
+error system.
+
+Run inside a git repo that has been set up with:
+    promptops init repo
+    promptops create prompt welcome-message
+The template-rendering and error-handling sections are self-contained and
+run anywhere.
 """
 
-from llmhq_promptops import get_prompt, PromptManager
-from llmhq_promptops.core.template import PromptTemplate
 from pathlib import Path
+
+from llmhq_promptops import get_prompt, PromptManager, PromptOpsError
+from llmhq_promptops.core.template import PromptTemplate
+
+
+def _required_vars(template: PromptTemplate):
+    """Public way to list a template's required variables."""
+    return [name for name, v in template.variables.items() if v.required]
 
 
 def example_basic_prompt_resolution():
-    """Demonstrate basic prompt resolution with different version references."""
+    """Basic prompt resolution with different version references."""
     print("🔍 Basic Prompt Resolution Examples")
     print("=" * 50)
-    
+
     try:
-        # Smart default - uses unstaged if different from working, else working
-        prompt1 = get_prompt("welcome-message", {"user_name": "Alice", "plan": "Pro"})
-        print(f"Smart default: {prompt1[:100]}...")
-        
-        # Specific version references
-        prompt2 = get_prompt("welcome-message:working", {"user_name": "Bob"})
-        print(f"Working version: {prompt2[:100]}...")
-        
-        # Test uncommitted changes
-        prompt3 = get_prompt("welcome-message:unstaged", {"user_name": "Charlie"})
-        print(f"Unstaged version: {prompt3[:100]}...")
-        
-    except Exception as e:
-        print(f"⚠️  Example requires existing prompts: {e}")
-        print("💡 Run 'promptops init repo' and 'promptops create prompt welcome-message' first")
+        # Smart default — resolves :unstaged if it differs from working,
+        # else working. The starter template scaffolded by
+        # `promptops create prompt` uses {{ user_input }}.
+        prompt1 = get_prompt("welcome-message:unstaged", {"user_input": "Alice"})
+        print(f"Smart default: {prompt1[:100]}")
+
+        # Latest committed (HEAD)
+        prompt2 = get_prompt("welcome-message:working", {"user_input": "Bob"})
+        print(f"Working (HEAD) version: {prompt2[:100]}")
+
+    except PromptOpsError as e:
+        print(f"⚠️  Example needs a prompt named 'welcome-message' [{e.code}]")
+        print("💡 Run: promptops init repo && promptops create prompt welcome-message")
 
 
 def example_prompt_manager():
-    """Demonstrate advanced PromptManager functionality."""
-    print("\n🔧 PromptManager Advanced Usage")
+    """PromptManager API: status, metadata, and diffs (public methods only)."""
+    print("\n🔧 PromptManager Usage")
     print("=" * 50)
-    
+
+    prompt_id = "welcome-message"
     try:
         manager = PromptManager()
-        
-        # Check for uncommitted changes
-        prompt_id = "welcome-message"
+
+        # Uncommitted-change check
         has_changes = manager.has_uncommitted_changes(prompt_id)
         print(f"📝 {prompt_id} has uncommitted changes: {has_changes}")
-        
-        # Get prompt metadata without rendering
-        template = manager._get_template_cached(f"{prompt_id}:working")
-        print(f"📋 Template metadata: {template.metadata}")
-        print(f"🔧 Required variables: {list(template.required_variables)}")
-        
-        # Get prompt differences
-        diff = manager.get_prompt_diff(prompt_id, "working", "unstaged")
-        if diff.strip():
-            print(f"📊 Differences found:\n{diff}")
-        else:
-            print("✅ No differences between working and unstaged versions")
-            
-    except Exception as e:
-        print(f"⚠️  Error: {e}")
+
+        # Metadata without rendering — use the PUBLIC get_template(id, version)
+        template = manager.get_template(prompt_id, "working")
+        print(f"📋 Template id: {template.metadata.id}")
+        print(f"🔧 Required variables: {_required_vars(template)}")
+
+        # Diff two versions. In v0.4.0 this returns a dict and raises
+        # PromptOpsError (E003) if a version can't be resolved.
+        try:
+            diff = manager.get_prompt_diff(prompt_id, "working", "unstaged")
+            if diff["identical"]:
+                print("✅ working and unstaged are identical")
+            else:
+                print(f"📊 {diff['lines_added']} line(s) changed between versions")
+        except PromptOpsError as e:
+            print(f"ℹ️  Could not diff [{e.code}]: {e.message}")
+
+    except PromptOpsError as e:
+        print(f"⚠️  [{e.code}] {e.message}")
 
 
 def example_version_management():
-    """Demonstrate version management and status checking."""
+    """List prompts and their working-tree status."""
     print("\n📋 Version Management Examples")
     print("=" * 50)
-    
+
+    prompts_dir = Path(".promptops/prompts")
+    if not prompts_dir.exists():
+        print("📁 No .promptops/prompts directory — run 'promptops init repo' first")
+        return
+
     try:
         manager = PromptManager()
-        
-        # List all prompt statuses
-        promptops_dir = Path(".promptops/prompts")
-        if promptops_dir.exists():
-            prompt_files = list(promptops_dir.glob("*.yaml"))
-            print(f"📁 Found {len(prompt_files)} prompt files:")
-            
-            for prompt_file in prompt_files[:3]:  # Show first 3
-                prompt_id = prompt_file.stem
-                try:
-                    has_changes = manager.has_uncommitted_changes(prompt_id)
-                    status = "🔄 Modified" if has_changes else "✅ Up to date"
-                    print(f"   {prompt_id}: {status}")
-                except:
-                    print(f"   {prompt_id}: ❓ Status unknown")
-        else:
-            print("📁 No .promptops directory found")
-            
-    except Exception as e:
-        print(f"⚠️  Error: {e}")
+        prompt_files = sorted(prompts_dir.glob("*.yaml"))
+        print(f"📁 Found {len(prompt_files)} prompt file(s):")
+        for prompt_file in prompt_files[:5]:
+            prompt_id = prompt_file.stem
+            try:
+                changed = manager.has_uncommitted_changes(prompt_id)
+                print(f"   {prompt_id}: {'🔄 modified' if changed else '✅ up to date'}")
+            except PromptOpsError as e:
+                print(f"   {prompt_id}: ❓ {e.code}")
+    except PromptOpsError as e:
+        print(f"⚠️  [{e.code}] {e.message}")
 
 
 def example_template_rendering():
-    """Demonstrate template rendering with variable validation."""
+    """Template rendering with variable validation (self-contained)."""
     print("\n🎨 Template Rendering Examples")
     print("=" * 50)
-    
-    # Example YAML content
+
     yaml_content = """
 metadata:
   id: example-prompt
@@ -106,11 +116,8 @@ metadata:
 
 template: |
   Hello {{ user_name }}!
-  {% if plan %}
-  You are subscribed to the {{ plan }} plan.
-  {% endif %}
-  
-  Available features:
+  {% if plan %}You are on the {{ plan }} plan.{% endif %}
+  Features:
   {% for feature in features %}
   - {{ feature }}
   {% endfor %}
@@ -120,74 +127,67 @@ variables:
   plan: {type: string, required: false}
   features: {type: list, default: ["Basic Feature"]}
 """
-    
+
+    # PromptTemplate parses both the metadata: and legacy prompt: schemas
+    # and renders inside a Jinja2 sandbox.
+    template = PromptTemplate(yaml_content)
+    print(f"📋 Template id: {template.metadata.id}")
+    print(f"🔧 Required variables: {_required_vars(template)}")
+
+    rendered = template.render({
+        "user_name": "Bob",
+        "plan": "Enterprise",
+        "features": ["Analytics", "Integrations", "Priority Support"],
+    })
+    print(f"🎨 Rendered:\n{rendered}")
+
+    # Validation: a missing required variable raises.
     try:
-        # Create template from YAML
-        template = PromptTemplate(yaml_content)
-        print(f"📋 Template ID: {template.metadata['id']}")
-        print(f"📋 Required variables: {list(template.required_variables)}")
-        
-        # Render with different variable sets
-        result1 = template.render({"user_name": "Alice"})
-        print(f"🎨 Minimal variables:\n{result1}")
-        
-        result2 = template.render({
-            "user_name": "Bob", 
-            "plan": "Enterprise",
-            "features": ["Advanced Analytics", "Custom Integrations", "Priority Support"]
-        })
-        print(f"🎨 Full variables:\n{result2}")
-        
-        # Demonstrate validation
-        try:
-            template.render({})  # Missing required variable
-        except ValueError as e:
-            print(f"✅ Validation works: {e}")
-            
-    except Exception as e:
-        print(f"⚠️  Error: {e}")
+        template.render({})
+    except ValueError as e:
+        print(f"✅ Validation works: {e}")
 
 
 def example_error_handling():
-    """Demonstrate proper error handling patterns."""
-    print("\n⚠️  Error Handling Examples")
+    """The v0.4.0 PROMPTOPS_E0XX error system: catch by code, read the hint."""
+    print("\n⚠️  Error Handling (PROMPTOPS_E0XX)")
     print("=" * 50)
-    
-    # Non-existent prompt
+
+    # Every user-facing error is a PromptOpsError (a ValueError subclass)
+    # carrying .code, .message, .hint, and .doc_url.
     try:
-        get_prompt("non-existent-prompt")
-    except Exception as e:
-        print(f"✅ Non-existent prompt: {type(e).__name__}: {e}")
-    
-    # Missing required variables
+        get_prompt("does-not-exist")
+    except PromptOpsError as e:
+        print(f"✅ caught {e.code}")
+        print(f"   message: {e.message}")
+        print(f"   hint:    {e.hint}")
+        print(f"   docs:    {e.doc_url}")
+
+    # Branch on the stable code, not the message text.
     try:
-        get_prompt("welcome-message", {})  # Assuming it requires variables
-    except Exception as e:
-        print(f"✅ Missing variables: {type(e).__name__}: {e}")
-    
-    # Invalid version reference
-    try:
-        get_prompt("welcome-message:invalid-version")
-    except Exception as e:
-        print(f"✅ Invalid version: {type(e).__name__}: {e}")
+        get_prompt("welcome-message", {})  # likely missing a required var
+    except PromptOpsError as e:
+        if e.code == "PROMPTOPS_E014":
+            print("✅ render failure handled by code (E014)")
+        else:
+            print(f"ℹ️  got {e.code}")
 
 
 def main():
-    """Run all examples."""
     print("🚀 llmhq-promptops SDK Examples")
     print("=" * 50)
-    print("This script demonstrates core SDK functionality.")
-    print("For best results, run in a directory with .promptops/ setup.\n")
-    
+    print("For the resolution sections, run in a repo set up with:")
+    print("  promptops init repo && promptops create prompt welcome-message\n")
+
     example_basic_prompt_resolution()
     example_prompt_manager()
     example_version_management()
     example_template_rendering()
     example_error_handling()
-    
+
     print("\n✨ Examples completed!")
-    print("💡 Try creating prompts with: promptops create prompt your-prompt-name")
-    print("📚 See README.md for more detailed documentation")
+    print("💡 Create prompts with: promptops create prompt your-prompt-name")
+    print("📚 See README.md and docs/error-codes.md for more.")
 
 
 if __name__ == "__main__":

@@ -22,6 +22,7 @@ from typing import Optional
 import typer
 
 from llmhq_promptops.core.deploys import DeployLog
+from llmhq_promptops.core.errors import E011_NO_DEPLOY_EVENTS, PromptOpsError
 from llmhq_promptops.core.snapshot import AutoResolver
 from llmhq_promptops.core.git_versioning import GitVersioning
 from llmhq_promptops.core.validation import validate_prompt_id
@@ -120,23 +121,46 @@ def blame(
     log = DeployLog(str(repo))
 
     if not log.exists():
+        err = PromptOpsError(
+            code=E011_NO_DEPLOY_EVENTS,
+            message="No deploy log at .promptops/deploys.jsonl.",
+            hint=(
+                "Record deploys with 'promptops deploy event' in CI, or "
+                "backfill from git history with "
+                "'promptops backfill-deploys --from-git-log'."
+            ),
+        )
+        typer.echo(f"Error: {err}", err=True)
+        raise typer.Exit(1)
+
+    # Corrupted lines must never silently skew the answer: count them
+    # and tell the user before showing the result.
+    log_read = log.read()
+    if log_read.skipped:
+        lines = ", ".join(str(n) for n in log_read.skipped_lines)
         typer.echo(
-            "Error: no deploy log at .promptops/deploys.jsonl. "
-            "Record deploys with 'promptops deploy event' or backfill "
-            "from git history with 'promptops backfill-deploys --from-git-log'.",
+            f"Warning: {log_read.skipped} malformed deploy event line(s) "
+            f"skipped (line {lines} of deploys.jsonl). The answer below "
+            f"may be incomplete — inspect the file or re-record those "
+            f"deploys.",
             err=True,
         )
-        raise typer.Exit(1)
 
     event = log.find_at(ts, env=env)
     if event is None:
-        typer.echo(
-            f"Error: no deploy events for env={env!r} at or before "
-            f"{ts.isoformat()}. Either the timestamp predates any "
-            f"recorded deploy, or the env name is wrong (try "
-            f"'promptops deploy list' to see what's recorded).",
-            err=True,
+        err = PromptOpsError(
+            code=E011_NO_DEPLOY_EVENTS,
+            message=(
+                f"No deploy events for env={env!r} at or before "
+                f"{ts.isoformat()}."
+            ),
+            hint=(
+                "Either the timestamp predates any recorded deploy, or the "
+                "env name is wrong. Run 'promptops deploy list' to see "
+                "what's recorded."
+            ),
         )
+        typer.echo(f"Error: {err}", err=True)
         raise typer.Exit(1)
 
     # Banner: which deploy answers the question.
@@ -149,8 +173,16 @@ def blame(
     typer.echo(f"  metadata:    {_format_metadata(event.metadata)}")
     typer.echo("")
 
+    # blame is incident archaeology: it resolves prompts at *arbitrary
+    # historical deploy commits*. A snapshot.json is frozen at ONE build
+    # commit, so AutoResolver's default snapshot-preference makes blame
+    # fail with E004 at every other commit once a snapshot exists in the
+    # repo. Prefer git whenever .git/ is present; only fall back to the
+    # snapshot in a snapshot-only runtime (where blame can answer for the
+    # snapshot's pinned commit and little else).
+    prefer = "git" if (repo / ".git").exists() else "auto"
     try:
-        resolver = AutoResolver(repo_path=str(repo))
+        resolver = AutoResolver(repo_path=str(repo), prefer=prefer)
     except ValueError as exc:
         typer.echo(f"Error: cannot construct resolver: {exc}", err=True)
         raise typer.Exit(1)

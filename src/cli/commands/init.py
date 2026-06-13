@@ -8,73 +8,85 @@ app = typer.Typer()
 
 @app.command()
 def repo(
-    with_hooks: bool = typer.Option(True, "--with-hooks/--no-hooks", help="Install git hooks automatically"),
+    with_hooks: bool = typer.Option(
+        False,
+        "--with-hooks/--no-hooks",
+        help=(
+            "Also install git hooks for automatic versioning. "
+            "Off by default since v0.4.0 — init never modifies .git/hooks/ "
+            "unless you ask. Enable later with 'promptops hooks install'."
+        ),
+    ),
     interactive: bool = typer.Option(True, "--interactive/--non-interactive", help="Show interactive prompts")
 ):
     """
-    Initialize the LLMHQ-promptops repository structure with optional git hooks.
+    Initialize the LLMHQ-promptops repository structure.
+
+    Creates the .promptops/ directory tree and a default config.yaml.
+    Does NOT touch .git/hooks/ unless --with-hooks is passed — installing
+    hooks is a deliberate second step via 'promptops hooks install'.
     """
     # Validate git repository
     if not _is_git_repo():
         typer.echo("❌ Not in a git repository. Please run 'git init' first.", err=True)
         raise typer.Exit(1)
-    
+
     # Create directory structure
     dirs = [
-        ".promptops/prompts", 
-        ".promptops/configs", 
-        ".promptops/templates", 
+        ".promptops/prompts",
+        ".promptops/configs",
+        ".promptops/templates",
         ".promptops/vars",
         ".promptops/tests",
         ".promptops/results",
         ".promptops/logs",
         ".promptops/reports"
     ]
-    
+
     typer.echo("🚀 Initializing PromptOps repository structure...")
-    
+
     for dir_path in dirs:
         Path(dir_path).mkdir(parents=True, exist_ok=True)
-    
+
     typer.echo("✅ Created .promptops directory structure")
-    
-    # Interactive configuration
-    if interactive and with_hooks:
-        typer.echo("\n🔧 Git Hook Configuration:")
-        install_hooks = typer.confirm("Install git hooks for automatic versioning?", default=True)
-        
-        if install_hooks:
+
+    # Directory + config only (D9): write a default config unless one
+    # already exists — re-running init must never clobber user settings.
+    if not Path(".promptops/config.yaml").exists():
+        _create_initial_config(False, True, False)
+        typer.echo("✅ Created default .promptops/config.yaml")
+
+    if with_hooks:
+        if interactive:
+            typer.echo("\n🔧 Git Hook Configuration:")
             run_tests = typer.confirm("Run basic tests before commits?", default=False)
             generate_reports = typer.confirm("Generate reports after commits?", default=True)
             verbose_logging = typer.confirm("Enable verbose logging?", default=False)
-            
-            # Create basic configuration
-            _create_initial_config(run_tests, generate_reports, verbose_logging)
-            
-            # Install hooks
-            if _install_hooks():
-                typer.echo("✅ Git hooks installed successfully!")
-                typer.echo("📝 Hooks will automatically version your prompts on commit.")
-            else:
-                typer.echo("⚠️  Hook installation failed. Run 'promptops hooks install' manually.")
-        else:
-            typer.echo("ℹ️  Skipping git hooks. Run 'promptops hooks install' later to enable automation.")
-    elif with_hooks and not interactive:
-        # Non-interactive mode with hooks
-        _create_initial_config(False, True, False)
+            # Honor the same idempotency contract as the default path:
+            # never silently clobber a config the user has already edited.
+            config_path = Path(".promptops/config.yaml")
+            if not config_path.exists() or typer.confirm(
+                f"{config_path} already exists. Overwrite with these answers?",
+                default=False,
+            ):
+                _create_initial_config(run_tests, generate_reports, verbose_logging)
+
         if _install_hooks():
-            typer.echo("✅ Git hooks installed with default configuration")
+            typer.echo("✅ Git hooks installed successfully!")
+            typer.echo("📝 Hooks will automatically version your prompts on commit.")
         else:
-            typer.echo("⚠️  Hook installation failed")
-    
+            typer.echo("⚠️  Hook installation failed. Run 'promptops hooks install' manually.")
+
     typer.echo("\n🎉 PromptOps initialization complete!")
     typer.echo("\n💡 Next steps:")
     typer.echo("   1. Create your first prompt: promptops create prompt my-prompt")
-    typer.echo("   2. Test it: promptops test --prompt my-prompt:unstaged")
-    typer.echo("   3. Commit changes to trigger automatic versioning")
-    
-    if not with_hooks:
-        typer.echo("   4. Install hooks later: promptops hooks install")
+    typer.echo("   2. Test it: promptops test runtest --prompt my-prompt:unstaged")
+
+    if with_hooks:
+        typer.echo("   3. Commit changes to trigger automatic versioning")
+    else:
+        typer.echo("   3. Optional: enable automatic versioning with 'promptops hooks install'")
+        typer.echo("      (init did not modify .git/hooks/ — hooks are opt-in since v0.4.0)")
 
 
 def _is_git_repo() -> bool:

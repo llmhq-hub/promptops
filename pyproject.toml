@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "llmhq-promptops"
-version = "0.3.3"
-description = "Comprehensive prompt management and testing framework for production LLM workflows with automated git versioning"
+version = "0.4.0"
+description = "Git blame for prompts: incident archaeology, git-native prompt versioning, and a no-SaaS production runtime for LLM workflows"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [
   { name = "jision", email = "jisionpc@gmail.com" }
@@ -17,7 +17,9 @@ maintainers = [
 ]
 keywords = [
   "llm", "prompt", "versioning", "testing", "git", "automation",
-  "cli", "sdk", "production", "workflow", "template", "jinja2"
+  "cli", "sdk", "production", "workflow", "template", "jinja2",
+  "incident-archaeology", "observability", "prompt-management",
+  "blame", "deploy-tracking", "llmops"
 ]
 classifiers = [
   "Development Status :: 5 - Production/Stable",
@@ -27,11 +29,10 @@ classifiers = [
   "License :: OSI Approved :: MIT License",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.8",
-  "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
   "Topic :: Software Development :: Build Tools",
   "Topic :: Software Development :: Libraries :: Python Modules",
@@ -46,8 +47,7 @@ dependencies = [
   "Jinja2>=3.1.6",
   "PyYAML>=6.0.2",
   "typer>=0.15.2",
-  "GitPython>=3.1.0",
-  "typing_extensions>=4.13.1"
+  "GitPython>=3.1.41"
 ]
 
 [project.urls]
