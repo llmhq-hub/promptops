@@ -154,10 +154,25 @@ anthropic.Anthropic().messages.create(
 | `promptops snapshot build` | Write `.promptops/snapshot.json` (production-runtime artifact) |
 | `promptops snapshot inspect` | Print contents of a snapshot |
 | `promptops blame --at <ts>` | Incident archaeology: what was running when? |
+| `promptops history <id>` | Every version a prompt has been, and what shipped each one |
+| `promptops doctor` | Health check: hooks, snapshot freshness, deploy log, versions, resolver |
 | `promptops backfill-deploys --from-git-log` | Seed the deploy log from existing git history |
 | `promptops migrate tag-history` | Create per-prompt git tags for historical commits |
 
 Full help: `promptops --help` or `promptops <command> --help`.
+
+## 📗 Guides
+
+| Guide | Read it when |
+|---|---|
+| [Day 0 Incident Playbook](docs/day-0-playbook.md) | Something went wrong in production and you need to know which prompt did it |
+| [Production Deployment](docs/production-deployment.md) | You are wiring the snapshot pipeline, Docker, and CI |
+| [Migrating from Hardcoded Prompts](docs/migration-from-hardcoded-prompts.md) | You have prompts in string literals today |
+| [Error Codes](docs/error-codes.md) | You hit a `PROMPTOPS_E0XX` and want the fix |
+| [Migration v0.3 to v0.4](docs/migration-v0.3-to-v0.4.md) | You are upgrading across the breaking release |
+
+Runnable examples live in [`examples/`](examples/), including Docker,
+GitHub Actions, hook lifecycle, error handling, and FastAPI.
 
 ## 📁 Project Structure
 
