@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`promptops test diff` now reports semver impact.** New `core/impact.py` grades a prompt change from its *variable signature* and declared models: MAJOR when a required variable is added, removed, renamed, or retyped, when an optional variable is promoted to required, or when a declared model is dropped; MINOR when an optional variable is added or removed, a required one is relaxed to optional, a model is added, or an optional variable's default changes; PATCH when only prose moved; NONE when nothing did. Prose is deliberately never graded: the variable interface is the only part of a prompt with a caller-facing contract, and a rule that guessed at intent would produce annotations nobody trusts.
+- `promptops test diff --exit-code` gates CI on that verdict: `0` none/patch, `2` minor, `3` major. This borrows git's `--exit-code` *flag* but not its *numbers*: `git diff --exit-code` returns `1` for "differences found", while PromptOps reserves `1` for "the command failed" because there are three severities to encode. Do not assume exact git parity.
+- Without `--exit-code` the command still always exits `0` on success, so existing usage is unaffected. To stop a hand-written CI step from silently passing a breaking change, the command prints `note: exiting 0, pass --exit-code to make this major fail CI` whenever impact is MINOR or MAJOR and the flag was omitted.
+- `promptops test diff --json` emits `{prompt, version1, version2, identical, diff, impact, changes[]}` for tooling and PR-comment integrations.
+- 39 new tests across `tests/test_impact.py` and `tests/test_diff_cli.py`.
 - **`PROMPTOPS_E012` is now enforced at build time.** `promptops snapshot build` scans every prompt for Jinja tags that require a template loader (`{% include %}`, `{% import %}`, `{% from %}`, `{% extends %}`) and refuses to write a snapshot containing one. PromptOps renders in a `SandboxedEnvironment` constructed without a loader, so these tags could never resolve at runtime: previously such a template snapshotted silently and only failed later, at render time, in production. The error names the prompt id and every offending line number. Nothing is written when the check fails, so a rejected build leaves no partial or stale snapshot behind.
 - `promptops snapshot build --allow-includes` downgrades the check to a warning and builds anyway, for unblocking an unrelated investigation. The resulting snapshot still fails at render time, and the CLI prints an on-screen warning naming each affected prompt so the tradeoff is never silent. `write_snapshot()` gains a matching `allow_includes=False` keyword argument.
 - New public helper `find_unsupported_includes(text)` in `core/snapshot.py`, returning `(line_number, keyword)` pairs. Tags appearing in ordinary prose ("please include the account tier") and tags inside a Jinja comment (`{# {% include "x" %} #}`) are not flagged; supported control tags such as `{% if %}` and `{% for %}` are unaffected.
@@ -16,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`promptops test diff` prints a real unified diff.** It previously printed two 500-character truncated content blobs, which could not be reviewed. Output is now `difflib.unified_diff` with colour applied only when stdout is a TTY and `NO_COLOR` is unset.
 - `docs/error-codes.md`: the E012 entry no longer describes a reserved, unimplemented code. It documents the real check, the fix, and the escape hatch.
 
 ## [0.4.0] - 2026-06-13
