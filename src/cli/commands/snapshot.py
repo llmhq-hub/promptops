@@ -16,9 +16,11 @@ from typing import Optional
 
 import typer
 
+from llmhq_promptops.core.errors import E012_TEMPLATE_INCLUDE_UNSUPPORTED
 from llmhq_promptops.core.snapshot import (
     SNAPSHOT_FILENAME,
     SnapshotResolver,
+    find_unsupported_includes,
     write_snapshot,
 )
 
@@ -55,6 +57,15 @@ def snapshot_build(
         "--pretty",
         help="Pretty-print JSON (larger file, easier to diff in code review).",
     ),
+    allow_includes: bool = typer.Option(
+        False,
+        "--allow-includes",
+        help=(
+            "Build even if a template uses {% include %} / {% import %} / "
+            "{% from %} / {% extends %} (PROMPTOPS_E012). The snapshot will "
+            "fail at render time; this is an escape hatch, not a fix."
+        ),
+    ),
 ):
     """Write a snapshot of every prompt at the given commit.
 
@@ -76,6 +87,7 @@ def snapshot_build(
             output_path=output,
             commit=commit,
             pretty=pretty,
+            allow_includes=allow_includes,
         )
     except ValueError as exc:
         typer.echo(f"Error: {exc}", err=True)
@@ -95,6 +107,35 @@ def snapshot_build(
     typer.echo(
         f"  generated_from_commit={(data.get('generated_from_commit') or 'none')[:12]}"
     )
+
+    # write_snapshot only logs the --allow-includes warning, and the CLI
+    # installs no logging handler, so it would otherwise be invisible. Anyone
+    # who bypassed the E012 gate has just produced a snapshot that fails at
+    # render time; say so on screen.
+    if allow_includes:
+        _warn_about_included_tags(data)
+
+
+def _warn_about_included_tags(data: dict) -> None:
+    """Print an on-screen E012 warning for each prompt that bypassed the gate."""
+    offenders = {
+        prompt_id: findings
+        for prompt_id, entry in sorted(data.get("prompts", {}).items())
+        if (findings := find_unsupported_includes(entry.get("text", "")))
+    }
+    if not offenders:
+        return
+
+    typer.echo("", err=True)
+    typer.echo(
+        f"WARNING [{E012_TEMPLATE_INCLUDE_UNSUPPORTED}]: "
+        f"{len(offenders)} prompt(s) use a Jinja tag that needs a template "
+        f"loader. This snapshot will fail at render time.",
+        err=True,
+    )
+    for prompt_id, findings in offenders.items():
+        where = ", ".join(f"line {line} ({{% {kw} %}})" for line, kw in findings)
+        typer.echo(f"  {prompt_id}: {where}", err=True)
 
 
 @app.command("inspect")

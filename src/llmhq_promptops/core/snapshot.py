@@ -43,10 +43,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 from .errors import (
@@ -57,6 +58,7 @@ from .errors import (
     E007_SNAPSHOT_INVALID,
     E008_SNAPSHOT_SCHEMA_MISMATCH,
     E009_RESOLVER_UNAVAILABLE,
+    E012_TEMPLATE_INCLUDE_UNSUPPORTED,
     PromptOpsError,
 )
 from .resolver import GitResolver, ResolvedPrompt
@@ -76,6 +78,83 @@ SNAPSHOT_FILENAME = "snapshot.json"
 MAX_SNAPSHOT_BYTES = 25 * 1024 * 1024
 
 
+# Jinja2 tags that need a template loader. PromptOps renders inside a
+# SandboxedEnvironment constructed without one (see core/template.py), so a
+# template using any of these cannot render at runtime no matter what. The
+# scan below catches them at build time instead of in production.
+_UNSUPPORTED_JINJA_TAGS = ("include", "import", "from", "extends")
+
+# Matches a Jinja block tag whose FIRST token is one of the unsupported
+# keywords: '{%' plus optional whitespace-control '-', whitespace, keyword,
+# then a word boundary. Requiring real block syntax is what keeps the words
+# 'include' / 'import' / 'from' / 'extends' in ordinary prose from tripping it.
+_UNSUPPORTED_TAG_RE = re.compile(
+    r"\{%-?\s*(" + "|".join(_UNSUPPORTED_JINJA_TAGS) + r")\b"
+)
+
+# Jinja comments. Stripped before scanning so a tag shown as an example inside
+# {# ... #} is not reported. Non-greedy and DOTALL so multi-line comments go too.
+_JINJA_COMMENT_RE = re.compile(r"\{#.*?#\}", re.DOTALL)
+
+
+def find_unsupported_includes(text: str) -> List[Tuple[int, str]]:
+    """Find Jinja tags that require a template loader.
+
+    Args:
+        text: Raw prompt file content (the same string stored as a snapshot
+            entry's ``text``).
+
+    Returns:
+        A list of ``(line_number, keyword)`` pairs, 1-based, in file order.
+        Empty when the text is clean.
+    """
+    # Blank out comments in place so surviving line numbers stay accurate:
+    # replace each comment with its own newlines rather than deleting it.
+    def _blank(match: re.Match) -> str:
+        return "\n" * match.group(0).count("\n")
+
+    scrubbed = _JINJA_COMMENT_RE.sub(_blank, text)
+
+    findings: List[Tuple[int, str]] = []
+    for line_number, line in enumerate(scrubbed.splitlines(), start=1):
+        for match in _UNSUPPORTED_TAG_RE.finditer(line):
+            findings.append((line_number, match.group(1)))
+    return findings
+
+
+def _check_includes(prompt_id: str, text: str, allow_includes: bool) -> None:
+    """Raise E012 for unsupported Jinja tags, or warn when explicitly allowed."""
+    findings = find_unsupported_includes(text)
+    if not findings:
+        return
+
+    where = ", ".join(f"line {line} ({{% {kw} %}})" for line, kw in findings)
+    detail = (
+        f"Prompt '{prompt_id}' uses a Jinja tag that requires a template "
+        f"loader: {where}. PromptOps renders in a sandboxed environment with "
+        f"no loader, so this cannot render at runtime."
+    )
+
+    if allow_includes:
+        logger.warning(
+            "[%s] %s Building anyway because --allow-includes was passed; "
+            "the resulting snapshot will fail at render time.",
+            E012_TEMPLATE_INCLUDE_UNSUPPORTED,
+            detail,
+        )
+        return
+
+    raise PromptOpsError(
+        code=E012_TEMPLATE_INCLUDE_UNSUPPORTED,
+        message=detail,
+        hint=(
+            "Inline the included content directly into the template. "
+            "If you need to build the snapshot anyway (it will fail at "
+            "render time), pass --allow-includes."
+        ),
+    )
+
+
 def _promptops_version() -> str:
     """Best-effort lookup of the running package version. Falls back gracefully."""
     try:
@@ -90,6 +169,7 @@ def write_snapshot(
     output_path: Optional[Path] = None,
     commit: Optional[str] = None,
     pretty: bool = False,
+    allow_includes: bool = False,
 ) -> Path:
     """Build and write a snapshot of every prompt under ``.promptops/prompts/``.
 
@@ -101,6 +181,10 @@ def write_snapshot(
             (HEAD content). Pass an explicit SHA or tag to pin to that point.
         pretty: If True, write with 2-space indentation. Default packs the
             output for smaller production images.
+        allow_includes: If True, downgrade the E012 unsupported-Jinja-tag
+            check from an error to a warning and build anyway. The resulting
+            snapshot is known-broken at render time; the flag exists as an
+            escape hatch, not a supported configuration.
 
     Returns:
         The path the snapshot was written to.
@@ -108,6 +192,9 @@ def write_snapshot(
     Raises:
         ValueError: If ``repo_path`` is not a git repo. (Snapshots are built
             FROM git; runtime use of the snapshot doesn't need it.)
+        PromptOpsError: E012 if any prompt uses a Jinja tag requiring a
+            template loader and ``allow_includes`` is False. Nothing is
+            written in that case.
     """
     repo = Path(repo_path).resolve()
     if output_path is None:
@@ -126,6 +213,9 @@ def write_snapshot(
     prompts_dict: Dict[str, Dict[str, Any]] = {}
     for prompt_id in sorted(git_resolver._git.list_available_prompts()):
         resolved = git_resolver.resolve(prompt_id, version_ref)
+        # Scan before any file is written, so a rejected build leaves no
+        # partial or stale snapshot behind.
+        _check_includes(prompt_id, resolved.text, allow_includes)
         prompts_dict[prompt_id] = {
             "text": resolved.text,
             "version": resolved.version,

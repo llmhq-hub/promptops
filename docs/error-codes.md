@@ -148,10 +148,29 @@ or nothing matches the query.
 
 ## PROMPTOPS_E012
 
-**Template include unsupported.** *(Reserved.)* PromptOps templates run in
-a Jinja2 `SandboxedEnvironment` without a file loader; `{% include %}` and
-`{% import %}` are not supported. A build-time scan raising this code is
-planned; today an include fails at render time with E014.
+**Template include unsupported.** PromptOps renders templates in a Jinja2
+`SandboxedEnvironment` constructed without a file loader, so the four tags
+that need one can never resolve at runtime: `{% include %}`, `{% import %}`,
+`{% from %}`, and `{% extends %}`.
+
+`promptops snapshot build` scans every prompt for these tags and refuses to
+write a snapshot that contains one. Catching it at build time is the whole
+point: a snapshot with an include is guaranteed-broken output, and failing in
+CI is far cheaper than failing at render time in production.
+
+- **When you'll see it:** running `promptops snapshot build` against a prompt
+  whose template pulls in another file. The message names the prompt id and
+  every offending line number.
+- **Fix:** inline the included content directly into the template. PromptOps
+  prompts are self-contained by design; composition happens in your
+  application code, not in the template.
+- **Escape hatch:** `promptops snapshot build --allow-includes` downgrades the
+  error to a warning and builds anyway. The resulting snapshot will still fail
+  at render time, so use this only to unblock an unrelated investigation.
+
+Tags in ordinary prose ("please include the account tier") and tags inside a
+Jinja comment (`{# {% include "x" %} #}`) are not flagged. Supported control
+tags like `{% if %}` and `{% for %}` are unaffected.
 
 ## PROMPTOPS_E013
 

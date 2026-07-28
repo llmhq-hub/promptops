@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`PROMPTOPS_E012` is now enforced at build time.** `promptops snapshot build` scans every prompt for Jinja tags that require a template loader (`{% include %}`, `{% import %}`, `{% from %}`, `{% extends %}`) and refuses to write a snapshot containing one. PromptOps renders in a `SandboxedEnvironment` constructed without a loader, so these tags could never resolve at runtime: previously such a template snapshotted silently and only failed later, at render time, in production. The error names the prompt id and every offending line number. Nothing is written when the check fails, so a rejected build leaves no partial or stale snapshot behind.
+- `promptops snapshot build --allow-includes` downgrades the check to a warning and builds anyway, for unblocking an unrelated investigation. The resulting snapshot still fails at render time, and the CLI prints an on-screen warning naming each affected prompt so the tradeoff is never silent. `write_snapshot()` gains a matching `allow_includes=False` keyword argument.
+- New public helper `find_unsupported_includes(text)` in `core/snapshot.py`, returning `(line_number, keyword)` pairs. Tags appearing in ordinary prose ("please include the account tier") and tags inside a Jinja comment (`{# {% include "x" %} #}`) are not flagged; supported control tags such as `{% if %}` and `{% for %}` are unaffected.
+- 19 new tests in `tests/test_snapshot_includes.py`.
+
+### Changed
+
+- `docs/error-codes.md`: the E012 entry no longer describes a reserved, unimplemented code. It documents the real check, the fix, and the escape hatch.
+
 ## [0.4.0] - 2026-06-13
 
 The breaking-change batch. All six lanes (A–F) landed, plus a full pre-release review pass (product-bug, security, and docs-alignment fixes). See [`docs/migration-v0.3-to-v0.4.md`](docs/migration-v0.3-to-v0.4.md) for the upgrade guide covering every breaking change below.

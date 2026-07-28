@@ -25,7 +25,7 @@ Code registry (authoritative copy lives in ``docs/error-codes.md``):
     E009  RESOLVER_UNAVAILABLE       AutoResolver found neither backend
     E010  INVALID_PROMPT_ID          prompt id fails validation rules
     E011  NO_DEPLOY_EVENTS           blame/history with empty deploy log
-    E012  TEMPLATE_INCLUDE_UNSUPPORTED  (reserved — jinja include scan)
+    E012  TEMPLATE_INCLUDE_UNSUPPORTED  jinja tag needs a template loader
     E013  INVALID_VERSION_SPEC       version string fails validation rules
     E014  RENDER_FAILED              Jinja2 render raised
     E015  PARSE_FAILED               prompt YAML failed to parse
@@ -55,7 +55,7 @@ E008_SNAPSHOT_SCHEMA_MISMATCH = "PROMPTOPS_E008"
 E009_RESOLVER_UNAVAILABLE = "PROMPTOPS_E009"
 E010_INVALID_PROMPT_ID = "PROMPTOPS_E010"
 E011_NO_DEPLOY_EVENTS = "PROMPTOPS_E011"
-E012_TEMPLATE_INCLUDE_UNSUPPORTED = "PROMPTOPS_E012"  # reserved, not raised yet
+E012_TEMPLATE_INCLUDE_UNSUPPORTED = "PROMPTOPS_E012"
 E013_INVALID_VERSION_SPEC = "PROMPTOPS_E013"
 E014_RENDER_FAILED = "PROMPTOPS_E014"
 E015_PARSE_FAILED = "PROMPTOPS_E015"
