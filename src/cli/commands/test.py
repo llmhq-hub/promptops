@@ -2,6 +2,7 @@ import os
 import json
 import time
 import datetime
+import difflib
 import yaml
 import typer
 import sys
@@ -14,6 +15,8 @@ from io import StringIO
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from llmhq_promptops import get_prompt, PromptManager
+from llmhq_promptops.core.impact import SemverImpact, compute_impact
+from llmhq_promptops.core.template import PromptTemplate
 
 app = typer.Typer()
 
@@ -270,36 +273,160 @@ def status():
         raise typer.Exit(1)
 
 
+# Exit codes for --exit-code. This borrows git's --exit-code *flag* but not
+# git's *numbers*: `git diff --exit-code` returns 1 for "differences found",
+# whereas we must encode three severities and still leave a code free to mean
+# "the command itself failed". 1 stays reserved for failure.
+_IMPACT_EXIT_CODES = {
+    SemverImpact.NONE: 0,
+    SemverImpact.PATCH: 0,
+    SemverImpact.MINOR: 2,
+    SemverImpact.MAJOR: 3,
+}
+
+
+def _color_enabled(as_json: bool) -> bool:
+    """Colour only when a human on a terminal will actually read it."""
+    if as_json or os.environ.get("NO_COLOR"):
+        return False
+    return sys.stdout.isatty()
+
+
+def _render_unified_diff(
+    content1: str, content2: str, version1: str, version2: str, color: bool
+) -> str:
+    lines = difflib.unified_diff(
+        content1.splitlines(),
+        content2.splitlines(),
+        fromfile=version1,
+        tofile=version2,
+        lineterm="",
+    )
+
+    out = []
+    for line in lines:
+        if not color:
+            out.append(line)
+        elif line.startswith("+++") or line.startswith("---"):
+            out.append(typer.style(line, bold=True))
+        elif line.startswith("@@"):
+            out.append(typer.style(line, fg=typer.colors.CYAN))
+        elif line.startswith("+"):
+            out.append(typer.style(line, fg=typer.colors.GREEN))
+        elif line.startswith("-"):
+            out.append(typer.style(line, fg=typer.colors.RED))
+        else:
+            out.append(line)
+    return "\n".join(out)
+
+
+_IMPACT_COLORS = {
+    SemverImpact.MAJOR: typer.colors.RED,
+    SemverImpact.MINOR: typer.colors.YELLOW,
+    SemverImpact.PATCH: typer.colors.GREEN,
+    SemverImpact.NONE: typer.colors.GREEN,
+}
+
+
 @app.command()
 def diff(
     prompt: str = typer.Argument(..., help="Prompt name"),
     version1: str = typer.Option("working", help="First version to compare"),
-    version2: str = typer.Option("unstaged", help="Second version to compare")
+    version2: str = typer.Option("unstaged", help="Second version to compare"),
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable JSON (for CI, PR comments, tooling).",
+    ),
+    exit_code: bool = typer.Option(
+        False,
+        "--exit-code",
+        help=(
+            "Exit with the semver impact: 0 none/patch, 2 minor, 3 major "
+            "(1 still means the command failed). Without this flag the "
+            "command always exits 0 on success, like 'git diff'."
+        ),
+    ),
 ):
-    """Compare two versions of a prompt."""
+    """Compare two versions of a prompt, with semver impact.
+
+    Impact is derived from the prompt's variable signature and declared
+    models, never from prose. Adding a required variable is MAJOR because
+    every caller must now supply it; rewording the template is PATCH.
+
+    Examples:
+
+      promptops test diff greeting                      # working vs unstaged
+      promptops test diff greeting --version1 v1.0.0    # against a tag
+      promptops test diff greeting --exit-code          # gate CI on impact
+      promptops test diff greeting --json               # for tooling
+    """
     try:
         manager = PromptManager()
-        
+
         # Raises PromptOpsError E003 on a missing version since v0.4.0;
         # the outer except renders it and exits 1.
         diff_result = manager.get_prompt_diff(prompt, version1, version2)
 
-        typer.echo(f"🔍 Comparing {prompt}: {version1} vs {version2}")
-        typer.echo("=" * 60)
-        
-        if diff_result["identical"]:
-            typer.echo("✅ Versions are identical")
-        else:
-            typer.echo(f"📊 Lines difference: {diff_result['lines_added']}")
-            typer.echo("\n📝 Content differences:")
-            typer.echo(f"\n--- {version1} ---")
-            typer.echo(diff_result["content1"][:500] + "..." if len(diff_result["content1"]) > 500 else diff_result["content1"])
-            typer.echo(f"\n+++ {version2} +++")
-            typer.echo(diff_result["content2"][:500] + "..." if len(diff_result["content2"]) > 500 else diff_result["content2"])
-        
+        content1 = diff_result["content1"]
+        content2 = diff_result["content2"]
+        identical = diff_result["identical"]
+
+        report = compute_impact(
+            PromptTemplate(content1), PromptTemplate(content2)
+        )
     except Exception as e:
         typer.echo(f"❌ Diff failed: {e}", err=True)
         raise typer.Exit(1)
+
+    color = _color_enabled(as_json)
+    unified = _render_unified_diff(content1, content2, version1, version2, color=False)
+
+    if as_json:
+        payload = {
+            "prompt": prompt,
+            "version1": version1,
+            "version2": version2,
+            "identical": identical,
+            "diff": unified,
+            **report.to_dict(),
+        }
+        typer.echo(json.dumps(payload, indent=2))
+    else:
+        typer.echo(f"🔍 Comparing {prompt}: {version1} vs {version2}")
+        typer.echo("=" * 60)
+
+        label = f"IMPACT: {report.impact.value.upper()}"
+        typer.echo(
+            typer.style(label, fg=_IMPACT_COLORS[report.impact], bold=True)
+            if color
+            else label
+        )
+        for change in report.changes:
+            typer.echo(f"  {change.impact.value.upper():<5} {change.detail}")
+
+        if identical and not report.changes:
+            typer.echo("✅ Versions are identical")
+        else:
+            typer.echo("")
+            typer.echo(
+                _render_unified_diff(
+                    content1, content2, version1, version2, color=color
+                )
+            )
+
+        # Anyone who hand-rolls a CI step and forgets --exit-code would
+        # otherwise get a silently green build on a breaking change. Say so
+        # at the moment it matters, in the output they are already reading.
+        if not exit_code and report.impact >= SemverImpact.MINOR:
+            typer.echo("")
+            typer.echo(
+                f"note: exiting 0, pass --exit-code to make this "
+                f"{report.impact.value} fail CI"
+            )
+
+    if exit_code:
+        raise typer.Exit(_IMPACT_EXIT_CODES[report.impact])
 
 
 def load_json_test_cases(json_file: str):
