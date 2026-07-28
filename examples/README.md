@@ -2,6 +2,22 @@
 
 This directory contains practical examples demonstrating how to use llmhq-promptops in various scenarios.
 
+## Pick an example
+
+| Example | Answers | Runnable |
+| --- | --- | --- |
+| [`incident-archaeology-demo/`](incident-archaeology-demo/) | "What prompt was running when this incident started?" | `./setup.sh` |
+| [`docker-snapshot/`](docker-snapshot/) | "How do I resolve prompts in a container with no `.git/`?" | `./build.sh` |
+| [`github-actions/`](github-actions/) | "How do I see a prompt's blast radius on every PR?" | copy the workflow |
+| [`hooks-lifecycle/`](hooks-lifecycle/) | "What do the git hooks do, and how do I turn them off?" | `./run.sh` |
+| [`error-handling/`](error-handling/) | "What should I catch, and how do I branch on error codes?" | `python main.py` |
+| [`fastapi-service/`](fastapi-service/) | "How do I wire this into a long-lived web service?" | own `requirements.txt` |
+| [`basic_usage.py`](basic_usage.py) | "What does the SDK surface look like?" | `python basic_usage.py` |
+
+Everything except `fastapi-service/` runs with only `llmhq-promptops`
+installed. `fastapi-service/` carries its own `requirements.txt` so the
+package itself stays lean.
+
 ## 🚀 Quick Start
 
 1. **Install llmhq-promptops**

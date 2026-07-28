@@ -1,0 +1,160 @@
+# PromptOps prompt-diff PR comment.
+#
+# Copy this file to .github/workflows/promptops-diff.yml in YOUR repository.
+# It is shipped as an example rather than an active workflow here because the
+# PromptOps repo has no .promptops/prompts/ of its own, so it would never fire.
+#
+# What it does: on a pull request that touches .promptops/prompts/**, work out
+# which prompts changed, compute each one's semver impact, and post a single
+# sticky comment. The comment is edited in place on subsequent pushes rather
+# than a new one being appended, so a long-running PR does not accumulate a
+# wall of stale bot noise.
+
+name: PromptOps prompt diff
+
+on:
+  pull_request:
+    paths:
+      - ".promptops/prompts/**"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  diff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: diffing a prompt against its committed version needs
+          # more than the single squashed commit a shallow clone provides.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install PromptOps
+        run: pip install llmhq-promptops
+
+      - name: Compute impact for each changed prompt
+        id: impact
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" \
+            -- '.promptops/prompts/*.yaml' || true)
+
+          if [ -z "$changed" ]; then
+            echo "no prompt changes"
+            echo "body=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          {
+            echo "## PromptOps prompt impact"
+            echo
+            echo "| Prompt | Impact | Changes |"
+            echo "| --- | --- | --- |"
+          } > comment.md
+
+          worst=0
+          for file in $changed; do
+            id=$(basename "$file" .yaml)
+
+            # --json keeps this parseable; --exit-code would abort the loop,
+            # so severity is read from the payload instead.
+            if ! out=$(promptops test diff "$id" \
+                  --version1 "$BASE_SHA" --version2 "$HEAD_SHA" --json 2>&1); then
+              echo "| \`$id\` | error | $(echo "$out" | head -1) |" >> comment.md
+              continue
+            fi
+
+            # Both extractions stay on ONE line each. A multi-line `python -c`
+            # string would dedent to column 0 and terminate this YAML block
+            # scalar, making the whole workflow file unparseable.
+            impact=$(printf '%s' "$out" | python -c 'import json,sys; print(json.load(sys.stdin)["impact"])')
+            details=$(printf '%s' "$out" | python -c 'import json,sys; print("<br>".join(c["detail"] for c in json.load(sys.stdin)["changes"]) or "prose only")')
+
+            # POSIX tr rather than bash's ${impact^^}: this step would still
+            # run if someone set `shell:` to sh or zsh, and a bashism would
+            # fail there in a way that is annoying to debug from CI logs.
+            impact_label=$(printf '%s' "$impact" | tr '[:lower:]' '[:upper:]')
+
+            echo "| \`$id\` | **$impact_label** | $details |" >> comment.md
+
+            case "$impact" in
+              major) [ "$worst" -lt 3 ] && worst=3 ;;
+              minor) [ "$worst" -lt 2 ] && worst=2 ;;
+            esac
+          done
+
+          {
+            echo
+            if [ "$worst" -eq 3 ]; then
+              echo "> **MAJOR**: the variable signature changed in a way that"
+              echo "> breaks existing callers. Every caller must be updated."
+            elif [ "$worst" -eq 2 ]; then
+              echo "> **MINOR**: additive signature change. Existing callers"
+              echo "> keep working."
+            else
+              echo "> Prose changes only. No caller-facing contract changed."
+            fi
+          } >> comment.md
+
+          {
+            echo "body<<PROMPTOPS_EOF"
+            cat comment.md
+            echo "PROMPTOPS_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "worst=$worst" >> "$GITHUB_OUTPUT"
+
+      - name: Post or update the sticky comment
+        if: steps.impact.outputs.body != ''
+        uses: actions/github-script@v7
+        env:
+          BODY: ${{ steps.impact.outputs.body }}
+        with:
+          script: |
+            const marker = '<!-- promptops-impact -->';
+            const body = `${marker}\n${process.env.BODY}`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existing = comments.find(
+              c => c.user.type === 'Bot' && c.body.includes(marker)
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+      # Optional gate. Uncomment to make a MAJOR prompt change block the PR.
+      # Requires a human to acknowledge the break rather than merging past it.
+      #
+      # - name: Fail on MAJOR impact
+      #   if: steps.impact.outputs.worst == '3'
+      #   run: |
+      #     echo "A prompt change breaks its caller contract. See the PR comment."
+      #     exit 1
