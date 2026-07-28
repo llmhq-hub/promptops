@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 from typing import Optional, List, Dict, Tuple
@@ -6,6 +7,9 @@ from git import Repo, InvalidGitRepositoryError
 from datetime import datetime
 
 from .validation import validate_prompt_id, check_file_size
+
+
+logger = logging.getLogger(__name__)
 
 
 class GitVersioning:
@@ -62,9 +66,19 @@ class GitVersioning:
             self._version_cache[cache_key] = versions
             
         except Exception as e:
-            # If file doesn't exist in git history, return empty list
+            # An empty list is the correct answer for a prompt with no commits
+            # yet (a newly created, uncommitted prompt), and callers such as
+            # get_latest_version and list_prompt_statuses depend on that. But a
+            # genuine git failure must not be indistinguishable from "no
+            # history": log it so it is diagnosable rather than silent.
+            logger.warning(
+                "Could not read git history for prompt '%s': %s: %s",
+                prompt_id,
+                type(e).__name__,
+                e,
+            )
             versions = []
-        
+
         return versions
     
     def get_prompt_at_version(self, prompt_id: str, version: Optional[str] = None) -> Optional[str]:
