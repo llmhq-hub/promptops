@@ -1,5 +1,5 @@
 # cli/commands/doctor.py
-"""Health check CLI (v0.6.0, TODO-S4).
+"""Health check CLI (v0.5.0, TODO-S4).
 
 ``promptops doctor`` — one command that answers "is this setup sane".
 

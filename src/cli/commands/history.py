@@ -1,5 +1,5 @@
 # cli/commands/history.py
-"""Prompt history CLI (v0.6.0, TODO-S3).
+"""Prompt history CLI (v0.5.0, TODO-S3).
 
 ``promptops history <prompt-id>`` — every version this prompt has been,
 newest first, with the deploys that actually shipped each one.

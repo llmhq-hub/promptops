@@ -1,4 +1,4 @@
-"""Tests for the E012 Jinja include scan in ``core/snapshot.py`` (v0.6.0).
+"""Tests for the E012 Jinja include scan in ``core/snapshot.py`` (v0.5.0).
 
 PromptOps renders templates in a Jinja2 ``SandboxedEnvironment`` with no file
 loader, so ``{% include %}``, ``{% import %}``, ``{% from %}`` and

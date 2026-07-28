@@ -1,4 +1,4 @@
-"""Tests for ``core/health.py`` and ``promptops doctor`` (v0.6.0, TODO-S4).
+"""Tests for ``core/health.py`` and ``promptops doctor`` (v0.5.0, TODO-S4).
 
 `doctor` answers "is this setup sane" in one command, instead of making
 someone remember which of six separate things to check by hand.

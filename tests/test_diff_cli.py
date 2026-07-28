@@ -1,6 +1,6 @@
-"""Tests for the rewritten ``promptops test diff`` (v0.6.0).
+"""Tests for the rewritten ``promptops test diff`` (v0.5.0).
 
-Before v0.6.0 this command printed two 500-char truncated content blobs, which
+Before v0.5.0 this command printed two 500-char truncated content blobs, which
 could not be reviewed. It now prints a real unified diff plus a semver impact
 verdict derived from the variable signature.
 

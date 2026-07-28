@@ -1,4 +1,4 @@
-"""Semver impact of a prompt change (v0.6.0).
+"""Semver impact of a prompt change (v0.5.0).
 
 ``promptops test diff`` answers "what changed", but the question a reviewer
 actually has is "will this break my callers". This module answers that.

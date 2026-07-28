@@ -1,4 +1,4 @@
-"""Tests for ``core/impact.py`` — semver impact of a prompt change (v0.6.0).
+"""Tests for ``core/impact.py`` — semver impact of a prompt change (v0.5.0).
 
 Impact is derived from the prompt's *variable signature* plus its declared
 models, never from prose. That is the only part of a prompt with a

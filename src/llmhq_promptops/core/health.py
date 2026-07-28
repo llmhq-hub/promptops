@@ -1,4 +1,4 @@
-"""Repository health checks behind ``promptops doctor`` (v0.6.0, TODO-S4).
+"""Repository health checks behind ``promptops doctor`` (v0.5.0, TODO-S4).
 
 Six checks, fixed. Not a plugin registry, not extensible, no auto-fix. The
 value of `doctor` is that one command answers "is this setup sane" instead of

@@ -1,4 +1,4 @@
-"""Tests for ``promptops history <prompt-id>`` (v0.6.0, TODO-S3).
+"""Tests for ``promptops history <prompt-id>`` (v0.5.0, TODO-S3).
 
 The timeline answers "what has this prompt been, and what actually shipped".
 Version history comes from git; deploy correlation comes from
