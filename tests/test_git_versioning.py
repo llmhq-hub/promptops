@@ -306,3 +306,80 @@ class TestResolveAtUnrelatedCommit:
     def test_truly_invalid_ref_still_returns_none(self, promptops_repo: Path):
         gv = GitVersioning(str(promptops_repo))
         assert gv._resolve_version_to_commit("hello", "definitely-not-a-ref") is None
+
+
+class TestGetPromptVersionsErrorHandling:
+    """The bare `except Exception` here used to swallow genuine git failures.
+
+    Returning [] for a prompt with no commits is correct and load-bearing: a
+    newly created, not-yet-committed prompt legitimately has no history, and
+    `get_latest_version` / `list_prompt_statuses` depend on that. But a real
+    git failure must not be indistinguishable from "no history yet".
+    """
+
+    def test_prompt_with_no_commits_returns_empty_without_warning(
+        self, tmp_path, caplog
+    ):
+        import subprocess
+        from llmhq_promptops.core.git_versioning import GitVersioning
+
+        subprocess.run(["git", "init", "--quiet"], cwd=tmp_path, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "t@e.com"], cwd=tmp_path, check=True
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "T"], cwd=tmp_path, check=True
+        )
+        subprocess.run(
+            ["git", "config", "commit.gpgsign", "false"], cwd=tmp_path, check=True
+        )
+        prompts = tmp_path / ".promptops" / "prompts"
+        prompts.mkdir(parents=True)
+        (prompts / "seed.yaml").write_text("template: hi\n")
+        subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+        subprocess.run(
+            ["git", "commit", "--quiet", "-m", "seed"], cwd=tmp_path, check=True
+        )
+
+        # 'ghost' has never been committed
+        gv = GitVersioning(str(tmp_path))
+        with caplog.at_level("WARNING"):
+            assert gv.get_prompt_versions("ghost") == []
+        assert "ghost" not in caplog.text
+
+    def test_genuine_git_failure_is_logged_not_silently_swallowed(
+        self, tmp_path, caplog, monkeypatch
+    ):
+        import subprocess
+        from llmhq_promptops.core.git_versioning import GitVersioning
+
+        subprocess.run(["git", "init", "--quiet"], cwd=tmp_path, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "t@e.com"], cwd=tmp_path, check=True
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "T"], cwd=tmp_path, check=True
+        )
+        subprocess.run(
+            ["git", "config", "commit.gpgsign", "false"], cwd=tmp_path, check=True
+        )
+        prompts = tmp_path / ".promptops" / "prompts"
+        prompts.mkdir(parents=True)
+        (prompts / "seed.yaml").write_text("template: hi\n")
+        subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+        subprocess.run(
+            ["git", "commit", "--quiet", "-m", "seed"], cwd=tmp_path, check=True
+        )
+
+        gv = GitVersioning(str(tmp_path))
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("git exploded")
+
+        monkeypatch.setattr(gv.repo, "iter_commits", _boom)
+
+        with caplog.at_level("WARNING"):
+            assert gv.get_prompt_versions("seed") == []
+
+        assert "git exploded" in caplog.text
+        assert "seed" in caplog.text
