@@ -131,6 +131,75 @@ class TestFindUnsupportedIncludes:
         assert find_unsupported_includes("Hello, {{ name }}!") == []
 
 
+# ── agreement with Jinja itself ─────────────────────────────────────
+
+
+def _jinja_needs_a_loader(text: str) -> bool:
+    """True when Jinja cannot render this text without a template loader.
+
+    The scan exists to predict exactly this, so the ground truth is a real
+    loaderless ``SandboxedEnvironment``, not our own regex. Asserting the
+    two agree is the only way to catch a scan that is merely
+    self-consistent.
+    """
+    from jinja2.sandbox import SandboxedEnvironment
+
+    try:
+        SandboxedEnvironment().from_string(text).render()
+        return False
+    except Exception:
+        return True
+
+
+class TestScannerAgreesWithJinja:
+    """Cases where the first implementation and Jinja disagreed.
+
+    Two root causes, both found by probing every input against a real
+    environment: the pattern accepted ``{%-`` but not ``{%+``, and the scan
+    iterated ``splitlines()`` so its ``\\s*`` could never span a newline.
+    """
+
+    @pytest.mark.parametrize(
+        "case,text",
+        [
+            # '{%+' is Jinja's explicit no-strip control, as valid as '{%-'.
+            ("plus whitespace control", '{%+ include "x.txt" %}'),
+            # Jinja allows a newline between '{%' and the keyword. A scan
+            # that walks one line at a time can never see any of these.
+            ("newline before include", '{%\ninclude "x.txt" %}'),
+            ("newline before import", "{%\nimport 'm.j2' as m %}"),
+            ("newline before from", "{%\nfrom 'm.j2' import helper %}"),
+            ("newline before extends", '{%\nextends "base.j2" %}'),
+            ("newline then tab", '{%\n\tinclude "x.txt" %}'),
+        ],
+    )
+    def test_catches_tags_jinja_cannot_render(self, case: str, text: str):
+        assert _jinja_needs_a_loader(text), f"bad fixture: {case} renders fine"
+        assert find_unsupported_includes(text), f"scan missed: {case}"
+
+    def test_raw_blocks_are_literal_text_not_tags(self):
+        """``{% raw %}`` makes its body literal, so there is nothing to load.
+
+        Flagging this is a false positive that blocks a build which
+        succeeded before E012 existed, with ``--allow-includes`` the only
+        escape and a warning about a non-problem.
+        """
+        text = '{% raw %}{% include "x.txt" %}{% endraw %}'
+        assert not _jinja_needs_a_loader(text)
+        assert find_unsupported_includes(text) == []
+
+    def test_a_real_include_after_a_raw_block_is_still_caught(self):
+        """Blanking raw blocks must not blind the rest of the scan."""
+        text = '{% raw %}{% include "a" %}{% endraw %}\n{% include "b" %}'
+        assert [line for line, _ in find_unsupported_includes(text)] == [2]
+
+    def test_line_numbers_survive_a_multiline_tag(self):
+        """The report points at where the tag opens, not where it ends."""
+        assert [
+            line for line, _ in find_unsupported_includes('a\nb\n{%\ninclude "x" %}\n')
+        ] == [3]
+
+
 # ── write_snapshot enforcement ──────────────────────────────────────
 
 
