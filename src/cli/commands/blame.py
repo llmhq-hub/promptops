@@ -232,7 +232,7 @@ def blame(
         raise typer.Exit(1)
 
     typer.echo(f"Resolved prompts ({len(prompt_ids)}):")
-    failures: list[tuple[str, str]] = []
+    failures: list[tuple[str, Optional[str], str]] = []
     for pid in prompt_ids:
         try:
             r = resolver.resolve(pid, event.commit)
@@ -241,12 +241,18 @@ def blame(
             )
         except ValueError as exc:
             # A prompt may not have existed at the deploy commit — that's
-            # informational, not fatal.
-            failures.append((pid, str(exc)))
+            # informational, not fatal. Keep the code and the message apart:
+            # rendering str(exc) spent 18 of 120 display columns on the
+            # "[PROMPTOPS_E0XX] " prefix, squeezing out the part that says
+            # what actually happened.
+            code = getattr(exc, "code", None)
+            message = getattr(exc, "message", None) or str(exc)
+            failures.append((pid, code, message))
 
     if failures:
         typer.echo("")
         typer.echo(f"Note: {len(failures)} prompt(s) could not be resolved at this commit:")
-        for pid, reason in failures:
-            short = reason.splitlines()[0][:120]
-            typer.echo(f"  {pid}: {short}")
+        for pid, code, message in failures:
+            # PROMPTOPS_E003 -> E003: still greppable, 12 columns cheaper.
+            label = f"[{code.removeprefix('PROMPTOPS_')}] " if code else ""
+            typer.echo(f"  {pid}: {label}{message.splitlines()[0][:120]}")

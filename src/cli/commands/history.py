@@ -116,7 +116,9 @@ def history(
                 ),
             )
 
-        versions = git.get_prompt_versions(prompt_id)[:limit]
+        all_versions = git.get_prompt_versions(prompt_id)
+        total = len(all_versions)
+        versions = all_versions[:limit]
 
         log = DeployLog(repo_path)
         events = log.events_for_env(env) if env else log.all_events()
@@ -149,7 +151,13 @@ def history(
     if as_json:
         typer.echo(
             json.dumps(
-                {"prompt": prompt_id, "versions": payload_versions}, indent=2
+                {
+                    "prompt": prompt_id,
+                    "shown": len(payload_versions),
+                    "total": total,
+                    "versions": payload_versions,
+                },
+                indent=2,
             )
         )
         return
@@ -177,3 +185,10 @@ def history(
                 f"at {deploy['timestamp']} by {deploy['deployed_by']}"
             )
         typer.echo("")
+
+    # Silent truncation reads as "this is the whole history" when it is not.
+    if total > len(payload_versions):
+        typer.echo(
+            f"Showing {len(payload_versions)} of {total} versions. "
+            f"Pass --limit {total} to see them all."
+        )

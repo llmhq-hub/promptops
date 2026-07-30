@@ -45,14 +45,25 @@ def repo(
 
     typer.echo("🚀 Initializing PromptOps repository structure...")
 
+    # Anchor to the repository root, the same place _install_hooks targets.
+    # See _repo_root for why these must not diverge.
+    root = _repo_root()
+
     for dir_path in dirs:
-        Path(dir_path).mkdir(parents=True, exist_ok=True)
+        (root / dir_path).mkdir(parents=True, exist_ok=True)
 
     typer.echo("✅ Created .promptops directory structure")
 
+    if root != Path.cwd():
+        # Never write outside the CWD silently.
+        typer.echo(
+            f"ℹ️  Wrote to the repository root ({root}), not the current "
+            f"directory, so the prompts and the git hooks share a root."
+        )
+
     # Directory + config only (D9): write a default config unless one
     # already exists — re-running init must never clobber user settings.
-    if not Path(".promptops/config.yaml").exists():
+    if not (root / ".promptops" / "config.yaml").exists():
         _create_initial_config(False, True, False)
         typer.echo("✅ Created default .promptops/config.yaml")
 
@@ -64,7 +75,7 @@ def repo(
             verbose_logging = typer.confirm("Enable verbose logging?", default=False)
             # Honor the same idempotency contract as the default path:
             # never silently clobber a config the user has already edited.
-            config_path = Path(".promptops/config.yaml")
+            config_path = _repo_root() / ".promptops" / "config.yaml"
             if not config_path.exists() or typer.confirm(
                 f"{config_path} already exists. Overwrite with these answers?",
                 default=False,
@@ -100,6 +111,28 @@ def _is_git_repo() -> bool:
         return True
     except subprocess.CalledProcessError:
         return False
+    except (FileNotFoundError, OSError):
+        # No git binary on PATH at all. That is still "not a git repo" from
+        # the caller's point of view, and it must produce init's friendly
+        # message rather than a raw traceback.
+        return False
+
+
+def _repo_root() -> Path:
+    """The git repository root, or the CWD if there is no .git/ above us.
+
+    Both the ``.promptops/`` tree and the git hooks must be anchored to the
+    same directory. Hooks can only live at the repository root, so that is
+    where the prompts go too. Creating ``.promptops/`` in the CWD instead
+    (the pre-v0.5.0 behavior) meant running ``init`` from a subdirectory put
+    prompts and hooks in different places, and the root pre-commit hook then
+    looked for ``.promptops/prompts/`` relative to itself, found nothing, and
+    silently versioned nothing.
+    """
+    current = Path.cwd()
+    while not (current / ".git").exists() and current != current.parent:
+        current = current.parent
+    return current if (current / ".git").exists() else Path.cwd()
 
 
 def _create_initial_config(run_tests: bool, generate_reports: bool, verbose: bool):
@@ -129,7 +162,9 @@ versioning:
     require_tests: {str(run_tests).lower()}
 """
     
-    config_file = Path(".promptops/config.yaml")
+    # Same anchor as the directory tree: see _repo_root.
+    config_file = _repo_root() / ".promptops" / "config.yaml"
+    config_file.parent.mkdir(parents=True, exist_ok=True)
     config_file.write_text(config_content)
 
 
@@ -139,12 +174,9 @@ def _install_hooks() -> bool:
         # Import here to avoid circular imports
         from ..commands.hooks import _install_pre_commit_hook, _install_post_commit_hook
         
-        # Find hooks directory
-        repo_root = Path.cwd()
-        while not (repo_root / ".git").exists() and repo_root != repo_root.parent:
-            repo_root = repo_root.parent
-        
-        hooks_dir = repo_root / ".git" / "hooks"
+        # Same root the .promptops/ tree was anchored to, so the hook can
+        # actually find the prompts it is supposed to version.
+        hooks_dir = _repo_root() / ".git" / "hooks"
         hooks_dir.mkdir(exist_ok=True)
         
         # Install hooks
