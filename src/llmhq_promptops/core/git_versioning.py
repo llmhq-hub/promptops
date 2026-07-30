@@ -1,12 +1,15 @@
 import logging
 import os
 import re
-from typing import Optional, List, Dict, Tuple
+from typing import TYPE_CHECKING, Optional, List, Dict, Tuple
 from pathlib import Path
-from git import Repo, InvalidGitRepositoryError
 from datetime import datetime
 
+from .errors import E018_GIT_BINARY_MISSING, PromptOpsError
 from .validation import validate_prompt_id, check_file_size
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from git import Repo
 
 
 logger = logging.getLogger(__name__)
@@ -14,18 +17,48 @@ logger = logging.getLogger(__name__)
 
 class GitVersioning:
     """Handles git-based versioning for prompt files."""
-    
+
     def __init__(self, repo_path: str = "."):
         """Initialize GitVersioning with repository path."""
         self.repo_path = Path(repo_path).resolve()
         self.promptops_dir = self.repo_path / ".promptops"
         self._repo = None
         self._version_cache = {}
-    
+
     @property
-    def repo(self) -> Repo:
-        """Get git repository instance."""
+    def repo(self) -> "Repo":
+        """Get git repository instance.
+
+        GitPython is imported here rather than at module scope on purpose.
+        It runs a ``refresh()`` at import time that raises when there is no
+        git executable on PATH, which used to make ``import llmhq_promptops``
+        fail outright and took the snapshot-only production runtime down with
+        it. That runtime is the whole point of ``snapshot.json``: the README
+        tells you to ship one in a Docker image, and ``python:3.11-slim`` has
+        no git binary. Deferring the import to the single place that actually
+        needs a repository keeps the snapshot path free of the dependency.
+        """
         if self._repo is None:
+            try:
+                from git import Repo, InvalidGitRepositoryError
+            except ImportError as exc:
+                # GitPython itself refused to load, almost always because no
+                # git executable is on PATH. Say that in our own voice rather
+                # than leaking its $GIT_PYTHON_REFRESH advice.
+                raise PromptOpsError(
+                    code=E018_GIT_BINARY_MISSING,
+                    message=(
+                        "This operation needs the git executable, and none "
+                        "was found on PATH."
+                    ),
+                    hint=(
+                        "Install git (e.g. 'apt-get install git'). If this is "
+                        "a production container, you do not need git at all: "
+                        "build a snapshot in CI with 'promptops snapshot "
+                        "build' and ship .promptops/snapshot.json instead."
+                    ),
+                ) from exc
+
             try:
                 self._repo = Repo(self.repo_path)
             except InvalidGitRepositoryError:
@@ -282,10 +315,21 @@ class GitVersioning:
         return None
     
     def is_git_repo(self) -> bool:
-        """Check if current directory is a git repository."""
+        """Check if current directory is a git repository.
+
+        A missing git *binary* is deliberately not answered here. Because
+        ``PromptOpsError`` subclasses ``ValueError`` (a v0.4.0 back-compat
+        decision), a bare ``except ValueError`` would swallow E018 and report
+        it as "not a repository", which is a different fact and sends the
+        caller looking for a missing ``.git/`` that is actually present.
+        """
         try:
             self.repo
             return True
+        except PromptOpsError as exc:
+            if exc.code == E018_GIT_BINARY_MISSING:
+                raise
+            return False
         except ValueError:
             return False
     

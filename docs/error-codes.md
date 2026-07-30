@@ -228,3 +228,24 @@ answers, so the API refuses.
 - **Fix:** attach a timezone: `datetime(2026, 5, 20, 14, 0,
   tzinfo=timezone.utc)`. The CLI parses bare dates as UTC midnight
   automatically.
+
+## PROMPTOPS_E018
+
+**Git binary missing.** The operation needs the `git` executable and none was
+found on `PATH`. This is distinct from `E005`, which means the `.git/`
+directory is absent: here the repository may be perfectly fine and it is the
+tool that is missing.
+
+- **When you'll see it:** running a git-backed command in a container or CI
+  image that never installed git; a stripped `PATH`.
+- **Fix, on a development machine:** install git (`apt-get install git`,
+  `brew install git`).
+- **Fix, in production:** you do not need git at all. Build a snapshot in CI
+  with `promptops snapshot build` and ship `.promptops/snapshot.json` in the
+  image. `AutoResolver` reads it with no git binary and no `.git/` directory
+  present, which is the whole point of the snapshot. See
+  [production deployment](production-deployment.md).
+
+Note that importing `llmhq_promptops` and resolving from a snapshot never
+require git. GitPython is imported lazily, at the single point that actually
+needs a repository, so a snapshot-only runtime never touches it.

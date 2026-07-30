@@ -10,7 +10,9 @@ import re
 from typing import Optional
 
 import typer
-from git import InvalidGitRepositoryError
+# GitPython is imported lazily inside the command: importing it at module
+# scope makes `promptops --help` require a git binary. See
+# core/git_versioning.py:repo for the full reasoning.
 
 from llmhq_promptops.core.git_versioning import GitVersioning
 from llmhq_promptops.core.validation import validate_prompt_id
