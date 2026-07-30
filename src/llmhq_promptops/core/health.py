@@ -175,6 +175,25 @@ def _check_snapshot(repo: Path) -> Check:
         )
 
     count = len(data.get("prompts", {}))
+
+    if not head:
+        # HEAD is unknowable: no git binary, no .git/, or a repo with no
+        # commits. The staleness comparison above is guarded on `head` and so
+        # silently did not run, and falling through to "is current, at HEAD"
+        # asserted freshness that was never checked. Report what is actually
+        # known instead. Still OK rather than WARN, because a production image
+        # with no git is the intended state and doctor should stay quiet there.
+        built = built_from[:12] if built_from else "an unrecorded commit"
+        return Check(
+            name="snapshot",
+            status=CheckStatus.OK,
+            message=(
+                f"snapshot.json parses ({count} prompt(s)), built from {built}. "
+                f"Cannot compare against HEAD from here."
+            ),
+            hint="Freshness is verifiable where git and .git/ are available.",
+        )
+
     return Check(
         name="snapshot",
         status=CheckStatus.OK,
@@ -230,11 +249,49 @@ def _check_deploy_log(repo: Path) -> Check:
 
 
 def _check_versions(repo: Path) -> Check:
+    from .errors import E018_GIT_BINARY_MISSING, PromptOpsError
     from .git_versioning import GitVersioning
 
+    # get_prompt_versions has to be inside this try too. It was outside, so in
+    # a container with prompts on disk but no git binary its E018 escaped to
+    # run_all_checks' generic handler, which reported FAIL and told the user
+    # they had found a PromptOps bug. A snapshot-only runtime is a supported
+    # deployment; the absence of git there is expected, not a fault.
     try:
         git = GitVersioning(str(repo))
         prompts = sorted(git.list_available_prompts())
+
+        if not prompts:
+            return Check(
+                name="versions",
+                status=CheckStatus.WARN,
+                message="No prompts found under .promptops/prompts/.",
+                hint="Create one with 'promptops create prompt <id>'.",
+            )
+
+        unversioned = [p for p in prompts if not git.get_prompt_versions(p)]
+    except PromptOpsError as exc:
+        if exc.code == E018_GIT_BINARY_MISSING:
+            return Check(
+                name="versions",
+                status=CheckStatus.WARN,
+                message=(
+                    "No git executable on PATH, so committed versions cannot "
+                    "be read here."
+                ),
+                hint=(
+                    "Expected in a snapshot-only runtime, where prompts "
+                    "resolve from snapshot.json and nothing needs git. "
+                    "Install git if you want version history in this "
+                    "environment."
+                ),
+            )
+        return Check(
+            name="versions",
+            status=CheckStatus.WARN,
+            message=f"Could not enumerate prompts: {exc}",
+            hint="Check that this is a git repository.",
+        )
     except Exception as exc:
         return Check(
             name="versions",
@@ -242,16 +299,6 @@ def _check_versions(repo: Path) -> Check:
             message=f"Could not enumerate prompts: {exc}",
             hint="Check that this is a git repository.",
         )
-
-    if not prompts:
-        return Check(
-            name="versions",
-            status=CheckStatus.WARN,
-            message="No prompts found under .promptops/prompts/.",
-            hint="Create one with 'promptops create prompt <id>'.",
-        )
-
-    unversioned = [p for p in prompts if not git.get_prompt_versions(p)]
 
     if unversioned:
         return Check(

@@ -187,6 +187,43 @@ class TestIndividualChecks:
 # ── CLI ─────────────────────────────────────────────────────────────
 
 
+class TestSnapshotCheckDoesNotOverclaim:
+    """The snapshot check must not assert freshness it never verified.
+
+    ``_head_sha`` returns None whenever HEAD is unknowable: no git binary, no
+    .git/ directory, a repo with no commits. The staleness comparison is
+    guarded on it (``if head and built_from and ...``) so it silently does not
+    run, and the OK branch then reported the snapshot as "at HEAD" regardless.
+    That is a false OK in the one environment where the answer matters most.
+    """
+
+    def _snapshot_message(self, repo: Path) -> str:
+        for check in run_all_checks(str(repo)):
+            if check.name == "snapshot":
+                return check.message
+        raise AssertionError("no snapshot check ran")
+
+    def test_does_not_claim_head_when_head_is_unknown(
+        self, healthy_repo: Path, monkeypatch
+    ):
+        from llmhq_promptops import write_snapshot
+        import llmhq_promptops.core.health as health
+
+        write_snapshot(str(healthy_repo))
+        monkeypatch.setattr(health, "_head_sha", lambda repo: None)
+
+        message = self._snapshot_message(healthy_repo)
+        assert "at HEAD" not in message
+        assert "current" not in message.lower()
+
+    def test_still_confirms_freshness_when_head_is_known(self, healthy_repo: Path):
+        """The honest path must keep working: a real HEAD still gets a verdict."""
+        from llmhq_promptops import write_snapshot
+
+        write_snapshot(str(healthy_repo))
+        assert "HEAD" in self._snapshot_message(healthy_repo)
+
+
 class TestDoctorCLI:
     def test_healthy_repo_exits_zero(self, healthy_repo: Path, monkeypatch):
         result = _run(healthy_repo, monkeypatch)
