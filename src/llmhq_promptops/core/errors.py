@@ -31,6 +31,7 @@ Code registry (authoritative copy lives in ``docs/error-codes.md``):
     E015  PARSE_FAILED               prompt YAML failed to parse
     E016  INVALID_DEPLOY_EVENT       DeployEvent field validation failed
     E017  NAIVE_TIMESTAMP            timezone-naive datetime where aware required
+    E018  GIT_BINARY_MISSING         no git executable on PATH
 """
 
 from __future__ import annotations
@@ -61,6 +62,7 @@ E014_RENDER_FAILED = "PROMPTOPS_E014"
 E015_PARSE_FAILED = "PROMPTOPS_E015"
 E016_INVALID_DEPLOY_EVENT = "PROMPTOPS_E016"
 E017_NAIVE_TIMESTAMP = "PROMPTOPS_E017"
+E018_GIT_BINARY_MISSING = "PROMPTOPS_E018"
 
 
 class PromptOpsError(ValueError):

@@ -17,7 +17,9 @@ from pathlib import Path
 from typing import Optional
 
 import typer
-from git import InvalidGitRepositoryError, Repo
+# GitPython is imported lazily inside the command: importing it at module
+# scope makes `promptops --help` require a git binary. See
+# core/git_versioning.py:repo for the full reasoning.
 
 from llmhq_promptops.core.deploys import DeployEvent, DeployLog
 
@@ -95,6 +97,8 @@ def backfill_deploys(
 
     repo_path = Path.cwd()
     try:
+        from git import InvalidGitRepositoryError, Repo
+
         repo = Repo(str(repo_path))
     except InvalidGitRepositoryError:
         typer.echo(
