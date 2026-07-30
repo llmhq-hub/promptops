@@ -10,9 +10,12 @@
 #
 # Usage in a consuming repo's .pre-commit-config.yaml:
 #
+# The rev must be v0.5.0 or later: this file and `promptops doctor` did not
+# exist at v0.4.0, so an older pin resolves to a tag with no hooks to run.
+#
 #   repos:
 #     - repo: https://github.com/llmhq-hub/promptops
-#       rev: v0.4.0
+#       rev: v0.5.0
 #       hooks:
 #         - id: promptops-doctor
 #         - id: promptops-snapshot-build

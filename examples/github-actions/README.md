@@ -94,8 +94,12 @@ problems before pushing:
 ```yaml
 repos:
   - repo: https://github.com/llmhq-hub/promptops
-    rev: v0.4.0
+    rev: v0.5.0
     hooks:
       - id: promptops-doctor
       - id: promptops-snapshot-build
 ```
+
+`rev` must be `v0.5.0` or later. Neither `.pre-commit-hooks.yaml` nor
+`promptops doctor` existed at `v0.4.0`, so an earlier pin resolves to a tag
+with no hooks to run.

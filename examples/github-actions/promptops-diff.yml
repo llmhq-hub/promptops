@@ -36,7 +36,9 @@ jobs:
           python-version: "3.11"
 
       - name: Install PromptOps
-        run: pip install llmhq-promptops
+        # >=0.5.0: this workflow parses `promptops test diff --json`, and
+        # neither --json nor the impact grading behind it exists earlier.
+        run: pip install 'llmhq-promptops>=0.5.0'
 
       - name: Compute impact for each changed prompt
         id: impact

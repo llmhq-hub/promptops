@@ -75,7 +75,10 @@ snapshot behind for a later stage to pick up.
 FROM python:3.11-slim
 WORKDIR /app
 
-RUN pip install --no-cache-dir llmhq-promptops
+# >=0.5.0 is required, not just recommended. python:3.11-slim ships no git
+# binary, and before 0.5.0 GitPython was imported at module scope, so
+# `import llmhq_promptops` failed outright in an image like this one.
+RUN pip install --no-cache-dir 'llmhq-promptops>=0.5.0'
 
 # The only PromptOps artifact. No .git/, no .promptops/prompts/.
 COPY snapshot.json /app/.promptops/snapshot.json
