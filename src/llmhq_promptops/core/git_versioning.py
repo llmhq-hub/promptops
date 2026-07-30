@@ -112,6 +112,50 @@ class GitVersioning:
         except (KeyError, Exception):
             return None
     
+    def version_at_commit(self, prompt_id: str, commit_sha: str) -> Optional[str]:
+        """Which version of ``prompt_id`` was in effect at ``commit_sha``.
+
+        This is the counterpart to :meth:`commit_for_version`, but not its
+        exact inverse, and the difference matters. A deploy commit usually
+        did not touch the prompt being asked about, so "which version is
+        tagged AT this commit" would answer ``None`` for almost every real
+        query. The useful question, and the one this answers, is "which
+        version was live at that point": the newest prompt-modifying commit
+        that is an ancestor of (or equal to) ``commit_sha``.
+
+        Args:
+            prompt_id: Prompt to look up.
+            commit_sha: Any ref ``Repo.commit`` accepts (full SHA, short
+                SHA, tag, ``HEAD~2``).
+
+        Returns:
+            The version label ``get_prompt_versions`` would report for that
+            point in history: a semver tag (``v1.2.3``) when one exists, the
+            ``commit-<sha8>`` fallback otherwise. ``None`` if the prompt did
+            not exist yet at that commit, or the ref cannot be resolved.
+        """
+        validate_prompt_id(prompt_id)
+
+        try:
+            target = self.repo.commit(commit_sha)
+        except Exception:
+            # An unresolvable ref is a caller error, not a crash: blame passes
+            # commits straight from the deploy log, which may reference
+            # history this checkout does not have (e.g. a shallow clone).
+            return None
+
+        # get_prompt_versions is newest-first, so the first ancestor found is
+        # the version that was live.
+        for entry in self.get_prompt_versions(prompt_id):
+            try:
+                candidate = self.repo.commit(entry["commit"])
+            except Exception:
+                continue
+            if candidate == target or self.repo.is_ancestor(candidate, target):
+                return entry["version"]
+
+        return None
+
     def commit_for_version(self, prompt_id: str, version: str) -> Optional[str]:
         """Resolve a version string to a full git commit hash.
 
