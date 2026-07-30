@@ -1,0 +1,46 @@
+# Hook definitions for the pre-commit framework (https://pre-commit.com).
+#
+# This file must live at the repository ROOT: that is where pre-commit looks
+# when another project references llmhq-hub/promptops as a hook repo.
+#
+# PromptOps ships its own git hooks (`promptops hooks install`) for automatic
+# version bumping. These entries are for teams already standardized on the
+# pre-commit framework, who want PromptOps checks alongside their existing
+# hooks rather than a second, competing hook installer.
+#
+# Usage in a consuming repo's .pre-commit-config.yaml:
+#
+#   repos:
+#     - repo: https://github.com/llmhq-hub/promptops
+#       rev: v0.4.0
+#       hooks:
+#         - id: promptops-doctor
+#         - id: promptops-snapshot-build
+
+- id: promptops-doctor
+  name: promptops doctor
+  description: >-
+    Check .promptops/ structure, hook installation, snapshot freshness,
+    deploy-log health, prompt versions, and resolver mode. Fails the commit
+    only on a genuine FAIL; warnings (no snapshot yet, hooks not installed)
+    pass.
+  entry: promptops doctor
+  language: python
+  # doctor inspects the repository, not individual files.
+  pass_filenames: false
+  files: ^\.promptops/
+  stages: [pre-commit]
+
+- id: promptops-snapshot-build
+  name: promptops snapshot build
+  description: >-
+    Rebuild .promptops/snapshot.json so the production-runtime artifact never
+    lags the prompts. Also enforces PROMPTOPS_E012, failing the commit if a
+    template uses a Jinja tag that needs a template loader ({% include %},
+    {% import %}, {% from %}, {% extends %}) and therefore could never render
+    at runtime.
+  entry: promptops snapshot build
+  language: python
+  pass_filenames: false
+  files: ^\.promptops/prompts/.*\.(yaml|yml)$
+  stages: [pre-commit]

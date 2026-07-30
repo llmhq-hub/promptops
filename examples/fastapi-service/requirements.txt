@@ -1,0 +1,6 @@
+# Not installed by the PromptOps test suite: this example carries its own
+# dependencies so the package itself stays lean.
+llmhq-promptops>=0.4.0
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2.0
