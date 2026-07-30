@@ -36,7 +36,10 @@ def main() -> None:
         f"expected snapshot resolution, got {resolved.source!r}"
     )
     print()
-    print("OK: resolved from snapshot.json with no .git/ present.")
+    print(
+        "OK: resolved from snapshot.json with no .git/ directory, and (in the "
+        "container) no git binary either."
+    )
 
 
 if __name__ == "__main__":

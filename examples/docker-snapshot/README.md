@@ -4,6 +4,15 @@ Proves the claim PromptOps makes about production: your image ships a single
 `snapshot.json` and resolves prompts from it, with no git working tree, no git
 binary, and no prompt YAML files present.
 
+## Requires >= 0.5.0
+
+Resolving prompts with **no git binary** present needs 0.5.0 or later. On
+0.4.0 and earlier, `import llmhq_promptops` fails in an image like this one:
+GitPython was imported at module scope and raises when there is no git
+executable, so the snapshot path never got a chance to run. The Dockerfile
+pins accordingly, so you get a clear pip error rather than a confusing
+runtime crash.
+
 ## Run it
 
 ```bash
@@ -40,5 +49,5 @@ manager = PromptManager(str(repo), resolver=AutoResolver(repo_path=str(repo)))
 
 `AutoResolver` picks `SnapshotResolver` when `snapshot.json` exists and
 `GitResolver` otherwise, so this file is byte-identical in a dev checkout and
-a production image. The `Dockerfile` also asserts the negative, failing the
-build if a `.git` directory ever leaks in.
+a production image. The `Dockerfile` also asserts both negatives, failing the build if a `.git`
+directory or a git binary ever ends up in the image.
