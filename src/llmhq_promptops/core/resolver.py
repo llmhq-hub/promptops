@@ -148,7 +148,19 @@ class GitResolver:
             # Specific version (v1.2.3 etc.) via the public lookup
             # (promoted from a private method in v0.4.0).
             commit_sha = self._git.commit_for_version(prompt_id, version)
+
+            # Report a version label, not whatever ref the caller happened to
+            # pass. When `version` is already a semver this returns the same
+            # string; when it is a commit SHA (which is what `promptops blame`
+            # passes, straight from the deploy log) this turns it into the
+            # version that was actually live at that commit. Without this,
+            # blame printed a bare 40-char SHA under "version:" while
+            # `promptops history` printed v1.2.3 for the same prompt.
             resolved_version = version
+            if commit_sha:
+                label = self._git.version_at_commit(prompt_id, commit_sha)
+                if label:
+                    resolved_version = label
 
         return ResolvedPrompt(
             text=text,
