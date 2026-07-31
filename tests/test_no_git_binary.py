@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -85,6 +86,38 @@ def snapshot_only_dir(tmp_path: Path) -> Path:
         (source / ".promptops" / "snapshot.json").read_text()
     )
     assert not (runtime / ".git").exists()
+    return runtime
+
+
+@pytest.fixture
+def production_tree_dir(tmp_path: Path) -> Path:
+    """A whole copied ``.promptops/`` tree: prompts AND snapshot, no ``.git/``.
+
+    Cherry-picking snapshot.json is what the docs show, but copying the entire
+    .promptops/ directory into an image is a supported and common layout, and
+    it is the one that broke ``doctor``. With prompts on disk the versions
+    check reaches git and raises E018; a snapshot-only directory short
+    circuits before that, which is why this needs its own fixture.
+    """
+    source = tmp_path / "src"
+    prompts = source / ".promptops" / "prompts"
+    prompts.mkdir(parents=True)
+    (prompts / "greeting.yaml").write_text(PROMPT)
+
+    _git(source, "init", "--quiet")
+    _git(source, "config", "user.email", "t@e.com")
+    _git(source, "config", "user.name", "Dev")
+    _git(source, "config", "commit.gpgsign", "false")
+    _git(source, "add", ".")
+    _git(source, "commit", "--quiet", "-m", "feat: greeting")
+
+    write_snapshot(str(source))
+
+    runtime = tmp_path / "image"
+    shutil.copytree(source / ".promptops", runtime / ".promptops")
+    assert not (runtime / ".git").exists()
+    assert (runtime / ".promptops" / "prompts" / "greeting.yaml").exists()
+    assert (runtime / ".promptops" / "snapshot.json").exists()
     return runtime
 
 
@@ -201,3 +234,52 @@ class TestGitNeedingPathsExplainThemselves:
 
     def test_error_code_is_registered(self):
         assert E018_GIT_BINARY_MISSING == "PROMPTOPS_E018"
+
+
+# ── doctor is the command you reach for IN that container ───────────
+
+
+class TestDoctorSurvivesTheNoGitContainer:
+    """``doctor`` diagnosing a production image must not fail on the image.
+
+    A snapshot-only runtime is a supported deployment, so the absence of git
+    there is the expected state, not a fault. Reporting FAIL made ``doctor``
+    exit 1 and blame itself ("This is a PromptOps bug; please report it") in
+    exactly the environment this release added support for.
+    """
+
+    def _doctor(self, cwd: Path, no_git_path: Path, *args: str):
+        promptops = Path(sys.executable).parent / "promptops"
+        return _run_without_git(cwd, no_git_path, str(promptops), "doctor", *args)
+
+    def test_exits_zero(self, production_tree_dir, no_git_path):
+        result = self._doctor(production_tree_dir, no_git_path)
+        assert result.returncode == 0, result.stdout + result.stderr
+
+    def test_does_not_accuse_itself_of_a_bug(self, production_tree_dir, no_git_path):
+        result = self._doctor(production_tree_dir, no_git_path)
+        assert "please report it" not in (result.stdout + result.stderr).lower()
+
+    def test_versions_check_explains_the_missing_git(
+        self, production_tree_dir, no_git_path
+    ):
+        """A warning naming git beats a FAIL quoting a raw exception."""
+        result = self._doctor(production_tree_dir, no_git_path)
+        combined = result.stdout + result.stderr
+        assert "git" in combined.lower()
+        assert "Check raised" not in combined
+
+    def test_json_reports_no_failures(self, production_tree_dir, no_git_path):
+        result = self._doctor(production_tree_dir, no_git_path, "--json")
+        payload = json.loads(result.stdout)
+        failed = [c for c in payload["checks"] if c["status"] == "fail"]
+        assert failed == [], failed
+
+    def test_snapshot_check_does_not_claim_head(
+        self, production_tree_dir, no_git_path
+    ):
+        """HEAD is unknowable here, so freshness must not be asserted."""
+        result = self._doctor(production_tree_dir, no_git_path, "--json")
+        payload = json.loads(result.stdout)
+        snapshot = next(c for c in payload["checks"] if c["name"] == "snapshot")
+        assert "at HEAD" not in snapshot["message"]

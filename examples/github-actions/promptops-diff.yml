@@ -17,6 +17,17 @@ on:
     paths:
       - ".promptops/prompts/**"
 
+# Note on forks: GitHub grants a pull_request run from a FORKED repository a
+# read-only GITHUB_TOKEN regardless of what this block says, so the comment
+# step below will fail with a 403 on external contributors' PRs. That is
+# deliberate on GitHub's part and this workflow does not try to defeat it.
+#
+# If you need comments on fork PRs, the only route is pull_request_target,
+# which runs the workflow from the BASE branch with a writable token and
+# access to secrets. Do not adopt it casually: checking out and executing the
+# PR head under pull_request_target hands repository write access to anyone
+# who opens a PR. If you go that way, keep the checkout at the base ref and
+# treat every value coming from the PR as untrusted input.
 permissions:
   contents: read
   pull-requests: write
@@ -36,7 +47,9 @@ jobs:
           python-version: "3.11"
 
       - name: Install PromptOps
-        run: pip install llmhq-promptops
+        # >=0.5.0: this workflow parses `promptops test diff --json`, and
+        # neither --json nor the impact grading behind it exists earlier.
+        run: pip install 'llmhq-promptops>=0.5.0'
 
       - name: Compute impact for each changed prompt
         id: impact
@@ -70,15 +83,21 @@ jobs:
             # so severity is read from the payload instead.
             if ! out=$(promptops test diff "$id" \
                   --version1 "$BASE_SHA" --version2 "$HEAD_SHA" --json 2>&1); then
-              echo "| \`$id\` | error | $(echo "$out" | head -1) |" >> comment.md
+              echo "| \`$id\` | error | $(printf '%s' "$out" | tr '|\n' '  ' | head -c 200) |" >> comment.md
               continue
             fi
 
             # Both extractions stay on ONE line each. A multi-line `python -c`
             # string would dedent to column 0 and terminate this YAML block
             # scalar, making the whole workflow file unparseable.
+            #
+            # `details` is derived from prompt variable NAMES, which are
+            # free-form YAML and may contain newlines and pipes. Both are
+            # collapsed rather than escaped: a newline would break this
+            # markdown table row, and worse, would let prompt content close
+            # the $GITHUB_OUTPUT heredoc below.
             impact=$(printf '%s' "$out" | python -c 'import json,sys; print(json.load(sys.stdin)["impact"])')
-            details=$(printf '%s' "$out" | python -c 'import json,sys; print("<br>".join(c["detail"] for c in json.load(sys.stdin)["changes"]) or "prose only")')
+            details=$(printf '%s' "$out" | python -c 'import json,sys; print("<br>".join(" ".join(c["detail"].split()).replace("|","\\|") for c in json.load(sys.stdin)["changes"]) or "prose only")')
 
             # POSIX tr rather than bash's ${impact^^}: this step would still
             # run if someone set `shell:` to sh or zsh, and a bashism would
@@ -106,10 +125,21 @@ jobs:
             fi
           } >> comment.md
 
+          # Random delimiter, per GitHub's guidance for multi-line step
+          # outputs. With a fixed one, any content containing that exact line
+          # closes the heredoc early and everything after it is parsed as
+          # further step outputs. Prompt content reaches this file, so that
+          # was reachable rather than theoretical: a variable named
+          # "x\nPROMPTOPS_EOF\nworst=0" would have set worst=0 and silenced
+          # the MAJOR gate at the bottom of this workflow. The `details`
+          # sanitising above closes the same hole from the other side; both
+          # are kept, because neither should be the only thing standing
+          # between prompt text and a forged step output.
+          delim="PROMPTOPS_EOF_$(openssl rand -hex 16)"
           {
-            echo "body<<PROMPTOPS_EOF"
+            echo "body<<$delim"
             cat comment.md
-            echo "PROMPTOPS_EOF"
+            echo "$delim"
           } >> "$GITHUB_OUTPUT"
 
           echo "worst=$worst" >> "$GITHUB_OUTPUT"

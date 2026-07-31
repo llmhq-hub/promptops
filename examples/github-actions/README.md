@@ -85,6 +85,25 @@ Without `--exit-code` the command always exits 0 on success and prints a note
 telling you the flag exists, so a forgotten flag cannot silently pass a
 breaking change.
 
+## Known limitation: pull requests from forks
+
+The workflow triggers on `pull_request`, and GitHub gives a run from a
+**forked** repository a read-only `GITHUB_TOKEN` no matter what the
+`permissions:` block asks for. The comment step therefore fails with a 403 on
+external contributors' PRs. Impact is still computed and still visible in the
+job log; only the comment is lost.
+
+This is a real tradeoff, not an oversight. The alternative trigger,
+`pull_request_target`, runs from the base branch with a writable token and
+access to secrets. Checking out and executing the PR head under it hands
+repository write access to anyone who can open a pull request, which is a
+considerably worse problem than a missing comment. If you need comments on
+fork PRs anyway, keep the checkout pinned to the base ref and treat every
+value originating from the PR as untrusted.
+
+For an internal repository where all PRs come from branches rather than
+forks, this limitation never applies.
+
 ## Also worth adding
 
 `.pre-commit-hooks.yaml` at the root of this repository makes PromptOps usable
@@ -94,8 +113,12 @@ problems before pushing:
 ```yaml
 repos:
   - repo: https://github.com/llmhq-hub/promptops
-    rev: v0.4.0
+    rev: v0.5.0
     hooks:
       - id: promptops-doctor
       - id: promptops-snapshot-build
 ```
+
+`rev` must be `v0.5.0` or later. Neither `.pre-commit-hooks.yaml` nor
+`promptops doctor` existed at `v0.4.0`, so an earlier pin resolves to a tag
+with no hooks to run.

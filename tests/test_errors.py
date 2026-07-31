@@ -302,7 +302,14 @@ class TestRegistryDocSync:
     @pytest.fixture
     def doc_text(self) -> str:
         doc = Path(__file__).parent.parent / "docs" / "error-codes.md"
-        assert doc.exists(), "docs/error-codes.md is missing"
+        if not doc.exists():
+            # The sdist ships tests/ but not docs/, so this check cannot run
+            # from an unpacked tarball. Skip rather than fail: it guards the
+            # repository against drift between the registry and its
+            # documentation, which is not a property of the installed
+            # package. Failing here would make the sdist's suite unpassable
+            # for a reason that says nothing about the code under test.
+            pytest.skip("docs/ is not shipped in the sdist; repo-only check")
         return doc.read_text(encoding="utf-8")
 
     def _registry_codes(self) -> set:

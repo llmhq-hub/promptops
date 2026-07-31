@@ -22,8 +22,11 @@ package itself stays lean.
 
 1. **Install llmhq-promptops**
    ```bash
-   pip install llmhq-promptops
+   pip install 'llmhq-promptops>=0.5.0'
    ```
+   Several examples here use commands and flags added in 0.5.0
+   (`doctor`, `history`, `test diff --json`), and `docker-snapshot/` and
+   `fastapi-service/` depend on 0.5.0 running without the git binary.
 
 2. **Initialize a test project**
    ```bash
@@ -78,7 +81,7 @@ manager.get_prompt_diff("prompt", "working", "unstaged")
 ### Prerequisites
 ```bash
 # Core examples
-pip install llmhq-promptops
+pip install 'llmhq-promptops>=0.5.0'
 ```
 
 ### Setup Test Environment

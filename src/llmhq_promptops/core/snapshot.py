@@ -85,16 +85,28 @@ MAX_SNAPSHOT_BYTES = 25 * 1024 * 1024
 _UNSUPPORTED_JINJA_TAGS = ("include", "import", "from", "extends")
 
 # Matches a Jinja block tag whose FIRST token is one of the unsupported
-# keywords: '{%' plus optional whitespace-control '-', whitespace, keyword,
-# then a word boundary. Requiring real block syntax is what keeps the words
+# keywords: '{%' plus optional whitespace control, whitespace, keyword, then a
+# word boundary. Requiring real block syntax is what keeps the words
 # 'include' / 'import' / 'from' / 'extends' in ordinary prose from tripping it.
+#
+# Both whitespace-control forms must be accepted. '{%+' is Jinja's explicit
+# no-strip marker and is exactly as valid as '{%-'; matching only '-' let
+# '{%+ include %}' through.
 _UNSUPPORTED_TAG_RE = re.compile(
-    r"\{%-?\s*(" + "|".join(_UNSUPPORTED_JINJA_TAGS) + r")\b"
+    r"\{%[-+]?\s*(" + "|".join(_UNSUPPORTED_JINJA_TAGS) + r")\b"
 )
 
 # Jinja comments. Stripped before scanning so a tag shown as an example inside
 # {# ... #} is not reported. Non-greedy and DOTALL so multi-line comments go too.
 _JINJA_COMMENT_RE = re.compile(r"\{#.*?#\}", re.DOTALL)
+
+# {% raw %} ... {% endraw %} makes its body literal text, so an 'include' in
+# there is never a tag and can never need a loader. Stripped like comments:
+# flagging it was a false positive that blocked a build which worked before
+# E012 existed.
+_JINJA_RAW_RE = re.compile(
+    r"\{%[-+]?\s*raw\s*[-+]?%\}.*?\{%[-+]?\s*endraw\s*[-+]?%\}", re.DOTALL
+)
 
 
 def find_unsupported_includes(text: str) -> List[Tuple[int, str]]:
@@ -105,21 +117,26 @@ def find_unsupported_includes(text: str) -> List[Tuple[int, str]]:
             entry's ``text``).
 
     Returns:
-        A list of ``(line_number, keyword)`` pairs, 1-based, in file order.
-        Empty when the text is clean.
+        A list of ``(line_number, keyword)`` pairs, 1-based, in file order,
+        each pointing at the line where the tag *opens*. Empty when the text
+        is clean.
     """
-    # Blank out comments in place so surviving line numbers stay accurate:
-    # replace each comment with its own newlines rather than deleting it.
+    # Blank out comments and raw blocks in place so surviving line numbers
+    # stay accurate: replace each with its own newlines rather than deleting.
     def _blank(match: re.Match) -> str:
         return "\n" * match.group(0).count("\n")
 
     scrubbed = _JINJA_COMMENT_RE.sub(_blank, text)
+    scrubbed = _JINJA_RAW_RE.sub(_blank, scrubbed)
 
-    findings: List[Tuple[int, str]] = []
-    for line_number, line in enumerate(scrubbed.splitlines(), start=1):
-        for match in _UNSUPPORTED_TAG_RE.finditer(line):
-            findings.append((line_number, match.group(1)))
-    return findings
+    # Scan the whole string rather than line by line. Jinja permits a newline
+    # between '{%' and the keyword, so a per-line scan can never match one:
+    # its '\s*' has no newline left to cross. Counting newlines up to the
+    # match start recovers the 1-based line the tag opens on.
+    return [
+        (scrubbed.count("\n", 0, match.start()) + 1, match.group(1))
+        for match in _UNSUPPORTED_TAG_RE.finditer(scrubbed)
+    ]
 
 
 def _check_includes(prompt_id: str, text: str, allow_includes: bool) -> None:

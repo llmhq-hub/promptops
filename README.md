@@ -169,6 +169,7 @@ Full help: `promptops --help` or `promptops <command> --help`.
 | [Production Deployment](docs/production-deployment.md) | You are wiring the snapshot pipeline, Docker, and CI |
 | [Migrating from Hardcoded Prompts](docs/migration-from-hardcoded-prompts.md) | You have prompts in string literals today |
 | [Error Codes](docs/error-codes.md) | You hit a `PROMPTOPS_E0XX` and want the fix |
+| [Migration v0.4 to v0.5](docs/migration-v0.4-to-v0.5.md) | You are upgrading to v0.5.0 (one break fails silently) |
 | [Migration v0.3 to v0.4](docs/migration-v0.3-to-v0.4.md) | You are upgrading across the breaking release |
 
 Runnable examples live in [`examples/`](examples/), including Docker,

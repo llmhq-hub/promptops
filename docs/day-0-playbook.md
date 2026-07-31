@@ -49,13 +49,13 @@ Blame: env=prod, at=2026-05-20T14:32:00+00:00
 
 Deploy event:
   timestamp:   2026-05-20T14:20:58+00:00
-  commit:      99f3a08eb03c (99f3a08eb03cc73095ceb6a199f4fb91dfb3c3a4)
+  commit:      47d71643d7fe (47d71643d7fe9b4ef6e9391f8bb6d8c8b65150e2)
   deployed_by: ci
   metadata:    (none)
 
 Resolved prompt 'refund-policy' (source=git):
-  version: 99f3a08eb03cc73095ceb6a199f4fb91dfb3c3a4
-  commit:  99f3a08eb03cc73095ceb6a199f4fb91dfb3c3a4
+  version: v1.2.0
+  commit:  47d71643d7fe9b4ef6e9391f8bb6d8c8b65150e2
   text:
     metadata:
       id: refund-policy
@@ -67,6 +67,11 @@ Resolved prompt 'refund-policy' (source=git):
 
 You now have the exact text that produced the behavior, and the commit it came
 from. Drop `--prompt` to see every prompt at that deploy.
+
+`version:` is the version label, not the commit. The deploy event names a
+repository commit; the version is whichever prompt version was live at that
+commit, which is what you actually want to reason about. Untagged history
+falls back to `commit-<sha8>`.
 
 Timestamp accepts ISO 8601, a bare date (`2026-05-20`, meaning midnight UTC),
 or the literal `now`. Use `--env staging` to blame a different environment;
@@ -81,11 +86,11 @@ promptops history refund-policy
 ```text
 📜 History for refund-policy
 ============================================================
-  v1.2.0           99f3a08e  2026-05-20  Dev
+  v1.2.0           47d71643  2026-05-20  Dev
       fix: escalate large refunds
       └─ deployed to prod at 2026-05-20T14:20:58+00:00 by ci
 
-  v1.1.0           366919f1  2026-05-01  Dev
+  v1.1.0           276fcb9a  2026-05-01  Dev
       feat: refund policy
       └─ deployed to prod at 2026-05-01T09:30:00+00:00 by ci
 ```
@@ -100,15 +105,18 @@ If the incident began between two of those deploys, you have your window.
 ## Step 3: what exactly changed?
 
 ```bash
-promptops test diff refund-policy --version1 366919f1 --version2 99f3a08e
+promptops test diff refund-policy --version1 276fcb9a --version2 47d71643
 ```
 
 ```text
+🔍 Comparing refund-policy: 276fcb9a vs 47d71643
+============================================================
 IMPACT: PATCH
 
---- 366919f1
-+++ 99f3a08e
-@@ -4,3 +4,4 @@
+--- 276fcb9a
++++ 47d71643
+@@ -3,3 +3,4 @@
+   description: Refund decision policy
  template: |
    Approve refunds under {{ threshold }} automatically.
 +  Escalate anything above to a human reviewer.

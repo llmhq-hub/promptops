@@ -25,9 +25,12 @@ Thank you for your interest in contributing to llmhq-promptops! This document pr
 
 3. **Install Development Dependencies**
    ```bash
-   pip install -r requirements.txt
-   pip install -e .[dev]
+   pip install -e '.[dev]'
    ```
+   `pyproject.toml` is the single source of truth for dependencies. There is
+   no `requirements.txt`: it drifted out of sync (it omitted GitPython
+   entirely and still pinned a dependency dropped in v0.4.0), so following it
+   produced an environment where `import llmhq_promptops` failed.
 
 4. **Verify Installation**
    ```bash
