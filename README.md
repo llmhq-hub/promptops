@@ -46,7 +46,7 @@ promptops blame --at 2026-05-20T10:00:00Z --prompt summarizer
 
 That's the hero use case. Three commands, one provable answer.
 
-> Full walkthrough + screencast script: [`examples/incident-archaeology-demo/README.md`](examples/incident-archaeology-demo/README.md)
+> Full walkthrough + screencast script: [`examples/incident-archaeology-demo/README.md`](https://github.com/llmhq-hub/promptops/blob/main/examples/incident-archaeology-demo/README.md)
 
 ### Path B — Try it on your own repo
 
@@ -165,14 +165,14 @@ Full help: `promptops --help` or `promptops <command> --help`.
 
 | Guide | Read it when |
 |---|---|
-| [Day 0 Incident Playbook](docs/day-0-playbook.md) | Something went wrong in production and you need to know which prompt did it |
-| [Production Deployment](docs/production-deployment.md) | You are wiring the snapshot pipeline, Docker, and CI |
-| [Migrating from Hardcoded Prompts](docs/migration-from-hardcoded-prompts.md) | You have prompts in string literals today |
-| [Error Codes](docs/error-codes.md) | You hit a `PROMPTOPS_E0XX` and want the fix |
-| [Migration v0.4 to v0.5](docs/migration-v0.4-to-v0.5.md) | You are upgrading to v0.5.0 (one break fails silently) |
-| [Migration v0.3 to v0.4](docs/migration-v0.3-to-v0.4.md) | You are upgrading across the breaking release |
+| [Day 0 Incident Playbook](https://github.com/llmhq-hub/promptops/blob/main/docs/day-0-playbook.md) | Something went wrong in production and you need to know which prompt did it |
+| [Production Deployment](https://github.com/llmhq-hub/promptops/blob/main/docs/production-deployment.md) | You are wiring the snapshot pipeline, Docker, and CI |
+| [Migrating from Hardcoded Prompts](https://github.com/llmhq-hub/promptops/blob/main/docs/migration-from-hardcoded-prompts.md) | You have prompts in string literals today |
+| [Error Codes](https://github.com/llmhq-hub/promptops/blob/main/docs/error-codes.md) | You hit a `PROMPTOPS_E0XX` and want the fix |
+| [Migration v0.4 to v0.5](https://github.com/llmhq-hub/promptops/blob/main/docs/migration-v0.4-to-v0.5.md) | You are upgrading to v0.5.0 (one break fails silently) |
+| [Migration v0.3 to v0.4](https://github.com/llmhq-hub/promptops/blob/main/docs/migration-v0.3-to-v0.4.md) | You are upgrading across the breaking release |
 
-Runnable examples live in [`examples/`](examples/), including Docker,
+Runnable examples live in [`examples/`](https://github.com/llmhq-hub/promptops/tree/main/examples/), including Docker,
 GitHub Actions, hook lifecycle, error handling, and FastAPI.
 
 ## 📁 Project Structure
@@ -279,7 +279,7 @@ Zero manual version management.
 
 ## 🤝 Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+See [CONTRIBUTING.md](https://github.com/llmhq-hub/promptops/blob/main/CONTRIBUTING.md).
 
 ```bash
 git clone https://github.com/llmhq-hub/promptops.git
@@ -293,7 +293,7 @@ pytest tests/
 
 ## 📄 License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](https://github.com/llmhq-hub/promptops/blob/main/LICENSE).
 
 ## 📞 Support
 
