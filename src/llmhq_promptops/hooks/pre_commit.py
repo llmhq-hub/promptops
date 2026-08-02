@@ -11,6 +11,7 @@ This hook:
 """
 
 import os
+import re
 import sys
 import yaml
 import subprocess
@@ -22,6 +23,21 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from llmhq_promptops.core.version_detector import SemanticVersionDetector, ChangeType
 from llmhq_promptops.core.template import PromptTemplate
+
+
+# A ``version:`` entry nested under a top-level key. The trailing group keeps
+# any end-of-line comment, so ``version: v1.0.0  # pinned`` stays pinned.
+_VERSION_LINE_RE = re.compile(
+    r"^(?P<indent>[ \t]+)version:(?P<sep>[ \t]+)"
+    r"(?P<value>[^#\n]*?)(?P<trail>[ \t]*(?:#.*)?)$"
+)
+
+# A key at column zero, which is what changes "which section am I in".
+_TOP_LEVEL_KEY_RE = re.compile(r"^(?P<key>[A-Za-z_][\w.-]*)[ \t]*:")
+
+# Sections that may carry the version, in precedence order: the current schema
+# first, then the legacy one.
+_VERSION_SECTIONS = ("metadata", "prompt")
 
 
 class PreCommitHook:
@@ -270,27 +286,124 @@ class PreCommitHook:
             return "v1.0.0"
     
     def _update_version_in_yaml(self, content: str, new_version: str) -> Optional[str]:
-        """Update version in YAML content."""
+        """Rewrite the version field, and nothing else.
+
+        This used to round-trip the document through ``yaml.safe_load`` and
+        ``yaml.dump`` to change one field. That silently deleted every comment
+        in the file and reserialized ``template: |`` block scalars into quoted
+        strings, on every commit, to every prompt. The comment naming a
+        prompt's owner is frequently the most valuable line in it, and a tool
+        that deletes it while claiming to bump a version number has not earned
+        the right to run on someone's commits.
+
+        So the edit is textual and targeted: find the version *line*, replace
+        its value, leave every other byte alone. When the file's shape makes
+        that impossible (a flow mapping, say), return None so the caller warns
+        and leaves the file untouched. Refusing is the correct failure mode;
+        falling back to a reserialization would be the original bug wearing a
+        disguise.
+        """
         try:
             data = yaml.safe_load(content)
-            
-            # Update version in metadata (preferred)
-            if "metadata" in data:
-                data["metadata"]["version"] = new_version
-            elif "prompt" in data:
-                # Legacy format
-                data["prompt"]["version"] = new_version
-            else:
-                # Add metadata section
-                data["metadata"] = data.get("metadata", {})
-                data["metadata"]["version"] = new_version
-            
-            # Convert back to YAML with formatting
-            return yaml.dump(data, default_flow_style=False, sort_keys=False, indent=2)
-            
         except yaml.YAMLError as e:
-            self._log(f"Failed to update YAML: {e}")
+            self._log(f"Failed to parse YAML: {e}")
             return None
+
+        if not isinstance(data, dict):
+            self._log("Prompt is not a YAML mapping, leaving it untouched")
+            return None
+
+        lines = content.splitlines()
+        updated = self._rewrite_version_line(lines, new_version)
+
+        if updated is None:
+            if self._declares_a_version(data):
+                # It has a version, but not as a line we can safely edit.
+                self._log(
+                    "Could not locate an editable version line, "
+                    "leaving the file untouched"
+                )
+                return None
+            updated = self._insert_version_line(lines, new_version)
+
+        if updated is None:
+            return None
+
+        # Preserve the original trailing newline, since rewriting a file
+        # without one is its own small act of vandalism.
+        result = "\n".join(updated)
+        if content.endswith("\n"):
+            result += "\n"
+
+        # The edit must both parse and mean what was intended. Reusing the
+        # reader as the check keeps the two definitions of "the version" from
+        # drifting apart.
+        if self._extract_current_version(result) != new_version:
+            self._log("Version rewrite did not take effect, leaving the file untouched")
+            return None
+
+        return result
+
+    @staticmethod
+    def _declares_a_version(data: Dict) -> bool:
+        """Does this document already carry a version anywhere we look for one?"""
+        for section in _VERSION_SECTIONS:
+            block = data.get(section)
+            if isinstance(block, dict) and "version" in block:
+                return True
+        return False
+
+    @staticmethod
+    def _rewrite_version_line(
+        lines: List[str], new_version: str
+    ) -> Optional[List[str]]:
+        """Replace the value on an existing version line, preserving comments."""
+        for wanted in _VERSION_SECTIONS:
+            section = None
+            for index, line in enumerate(lines):
+                top_level = _TOP_LEVEL_KEY_RE.match(line)
+                if top_level:
+                    section = top_level.group("key")
+                    continue
+                if section != wanted:
+                    continue
+                match = _VERSION_LINE_RE.match(line)
+                if match:
+                    out = list(lines)
+                    out[index] = (
+                        f"{match.group('indent')}version:"
+                        f"{match.group('sep')}{new_version}"
+                        f"{match.group('trail')}"
+                    )
+                    return out
+        return None
+
+    @staticmethod
+    def _insert_version_line(
+        lines: List[str], new_version: str
+    ) -> Optional[List[str]]:
+        """Add a version to a prompt that has none, without moving anything."""
+        for wanted in _VERSION_SECTIONS:
+            for index, line in enumerate(lines):
+                top_level = _TOP_LEVEL_KEY_RE.match(line)
+                if not top_level or top_level.group("key") != wanted:
+                    continue
+                # Match the indentation the section already uses, so the
+                # insert is invisible in review apart from the new line.
+                indent = "  "
+                for following in lines[index + 1:]:
+                    if not following.strip():
+                        continue
+                    leading = following[: len(following) - len(following.lstrip())]
+                    if leading:
+                        indent = leading
+                    break
+                out = list(lines)
+                out.insert(index + 1, f"{indent}version: {new_version}")
+                return out
+
+        # No section to put it in: append one rather than reordering the file.
+        return list(lines) + ["metadata:", f"  version: {new_version}"]
     
     def _write_file(self, file_path: str, content: str):
         """Write content to file atomically."""

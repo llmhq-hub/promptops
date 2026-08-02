@@ -39,7 +39,9 @@ class PostCommitHook:
         self.verbose = self.config.get("verbose", False)
         self.auto_tag = self.config.get("auto_tag_versions", True)
         self.run_tests = self.config.get("post_commit_tests", True)
-        self.generate_reports = self.config.get("generate_reports", True)
+        # Off by default: writing files into someone's repository after every
+        # commit is opt-in behavior, not a sensible default.
+        self.generate_reports = self.config.get("generate_reports", False)
     
     def run(self) -> int:
         """Run the post-commit hook.
@@ -167,14 +169,10 @@ class PostCommitHook:
             
             # Update index file
             self._update_reports_index(reports_dir, report_file, prompt_files)
-            
-            # Add reports to git
-            subprocess.run(
-                ["git", "add", str(reports_dir)],
-                cwd=self.repo_path,
-                check=True
-            )
-            
+
+            # Deliberately NOT `git add`-ed. Staging files the user never
+            # touched meant their *next* commit silently carried report files
+            # they had not asked for. What to do with these is their call.
             self._log(f"📊 Generated report: {report_file.relative_to(self.repo_path)}")
             
         except Exception as e:
@@ -385,7 +383,7 @@ class PostCommitHook:
             "verbose": False,
             "auto_tag_versions": True,
             "post_commit_tests": True,
-            "generate_reports": True
+            "generate_reports": False
         }
     
     def _log(self, message: str):

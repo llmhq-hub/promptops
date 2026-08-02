@@ -71,7 +71,12 @@ def repo(
         if interactive:
             typer.echo("\n🔧 Git Hook Configuration:")
             run_tests = typer.confirm("Run basic tests before commits?", default=False)
-            generate_reports = typer.confirm("Generate reports after commits?", default=True)
+            # Defaults to no, matching the hook: this writes markdown files
+            # into the user's repository after every commit.
+            generate_reports = typer.confirm(
+                "Write a markdown report into .promptops/reports/ after commits?",
+                default=False,
+            )
             verbose_logging = typer.confirm("Enable verbose logging?", default=False)
             # Honor the same idempotency contract as the default path:
             # never silently clobber a config the user has already edited.
