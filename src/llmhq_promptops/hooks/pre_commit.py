@@ -428,17 +428,27 @@ class PreCommitHook:
             raise
     
     def _validate_prompt_syntax(self, content: str) -> bool:
-        """Validate prompt YAML syntax and structure."""
+        """Validate prompt YAML syntax and structure.
+
+        Constructing a ``PromptTemplate`` parses the YAML but does *not*
+        compile the Jinja source: ``PromptTemplate.template`` is a lazy
+        property. So this method claimed to validate syntax while letting an
+        unclosed ``{% if %}`` straight through to production, where it fails
+        at render time. Touching the property compiles it, which is the whole
+        point of a pre-commit check on a guaranteed-broken template.
+        """
         try:
             # Basic YAML validation
             data = yaml.safe_load(content)
-            
+
             # Try to create PromptTemplate (this validates structure)
             template = PromptTemplate(content)
-            
-            # Basic validation passed
+
+            # Compile the Jinja source. Syntax errors raise here.
+            template.template
+
             return True
-            
+
         except Exception as e:
             self._log(f"Validation failed: {e}")
             return False

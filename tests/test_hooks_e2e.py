@@ -315,7 +315,7 @@ class TestCommitWithHooksInstalled:
 
         assert result.returncode == 0, result.stdout + result.stderr
         tags = _git(empty_repo, "tag", "-l").split()
-        assert any(t.startswith("greeting-v") for t in tags), (
+        assert any(t.startswith("prompt-greeting-v") for t in tags), (
             "a root commit produced no version tag; auto-versioning silently "
             f"did nothing. tags={tags!r}"
         )

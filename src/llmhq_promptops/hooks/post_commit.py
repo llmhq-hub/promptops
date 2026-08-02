@@ -16,13 +16,34 @@ import json
 import yaml
 from pathlib import Path
 from datetime import datetime
-from typing import List, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from llmhq_promptops.core.git_versioning import GitVersioning
+from llmhq_promptops.core.template import PromptTemplate
 from llmhq_promptops.prompt_manager import PromptManager
+
+
+# Stand-in values used to exercise the render path. The point is to reach the
+# renderer at all, not to produce meaningful text, so anything type-plausible
+# will do.
+_PLACEHOLDERS = {
+    "string": "example",
+    "str": "example",
+    "text": "example",
+    "number": 1,
+    "integer": 1,
+    "int": 1,
+    "float": 1.0,
+    "boolean": True,
+    "bool": True,
+    "list": [],
+    "array": [],
+    "dict": {},
+    "object": {},
+}
 
 
 class PostCommitHook:
@@ -124,7 +145,13 @@ class PostCommitHook:
                 version = self._get_prompt_version(prompt_file)
                 
                 if version:
-                    tag_name = f"{prompt_id}-{version}"
+                    # "prompt-<id>-v1.2.3" is the one per-prompt format the
+                    # SDK reads (GitVersioning._get_tag_version), and the one
+                    # `promptops migrate tag-history` writes. The hook used to
+                    # emit "<id>-v1.2.3", which matches neither, so every tag
+                    # auto-versioning ever created was invisible to history,
+                    # blame, and version resolution.
+                    tag_name = f"prompt-{prompt_id}-{version}"
                     
                     # Check if tag already exists ('--' so a crafted
                     # tag_name can't inject a git option; the write path
@@ -349,21 +376,61 @@ class PostCommitHook:
         except subprocess.CalledProcessError:
             return "unknown"
     
+    def _validate_prompt(self, prompt_file: str) -> Tuple[bool, str]:
+        """Is this prompt usable? Returns (ok, detail).
+
+        Deliberately **not** ``render({})``. That is what this check used to
+        do, and rendering with no variables fails by construction for any
+        prompt declaring a required one:
+
+            PROMPTOPS_E014: Required variable 'name' not provided
+
+        Since ``post_commit_tests`` defaults to on, every user saw that red
+        mark on every commit. A check that cannot pass teaches people to
+        ignore everything the tool prints, which is worse than no check.
+
+        What it was reaching for is three things that can genuinely be wrong:
+        the YAML parses into a prompt, the Jinja source compiles (the
+        ``.template`` property is what triggers that; constructing a
+        ``PromptTemplate`` alone does not), and the template renders when
+        given values for the variables it declares.
+        """
+        try:
+            full_path = self.repo_path / prompt_file
+            template = PromptTemplate(full_path.read_text())
+            template.template  # compiles the Jinja source; raises on bad syntax
+            template.render(self._sample_variables(template))
+            return True, ""
+        except Exception as e:
+            return False, str(e)
+
+    @staticmethod
+    def _sample_variables(template: PromptTemplate) -> Dict[str, Any]:
+        """A plausible value for every declared variable."""
+        sample: Dict[str, Any] = {}
+        for name, var in template.variables.items():
+            if var.default is not None:
+                sample[name] = var.default
+            else:
+                sample[name] = _PLACEHOLDERS.get(str(var.type).lower(), "example")
+        return sample
+
     def _run_post_commit_tests(self, prompt_files: List[str]):
-        """Run tests after commit."""
+        """Validate each changed prompt after the commit."""
         try:
             self._log("🧪 Running post-commit tests...")
-            
+
             for prompt_file in prompt_files:
                 prompt_id = Path(prompt_file).stem
-                # Basic validation test
-                try:
-                    manager = PromptManager(str(self.repo_path))
-                    manager.get_prompt(f"{prompt_id}:working", {})
+                if not (self.repo_path / prompt_file).exists():
+                    # Removed in this commit; nothing left to validate.
+                    continue
+                ok, detail = self._validate_prompt(prompt_file)
+                if ok:
                     self._log(f"✅ {prompt_id}: Post-commit validation passed")
-                except Exception as e:
-                    self._log(f"❌ {prompt_id}: Post-commit test failed - {e}")
-                    
+                else:
+                    self._log(f"❌ {prompt_id}: Post-commit test failed - {detail}")
+
         except Exception as e:
             self._log(f"Post-commit tests failed: {e}")
     
