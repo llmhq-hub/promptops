@@ -83,6 +83,13 @@ fall back to: v0.4.0 and every release back to v0.2.0 carry the same hook bug.
   calls it healthy. The check now runs the shebang interpreter against
   `import llmhq_promptops` and reports FAIL when that cannot work. Missing hooks
   remain a WARN, since they have been opt-in since v0.4.0.
+- **`promptops doctor` failed a repo whose last prompt was deleted.** `git rm`
+  of the final prompt removes `.promptops/prompts/`, since git does not track
+  empty directories, and the structure check called that broken and exited 1.
+  It conflated "PromptOps was never set up here" with "set up, and currently
+  has no prompts". In a git repository this is now a WARN; without `.git/` it
+  stays a FAIL, because there is genuinely nothing left to resolve from. This
+  state was unreachable before 0.6.0, since the hook blocked deletions.
 - The four fully silent `except Exception` handlers in the hooks now log.
   Falling back to a default is usually right; doing it without saying so is how
   six releases of breakage stayed invisible.

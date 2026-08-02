@@ -62,12 +62,37 @@ def _check_structure(repo: Path) -> Check:
     prompts_dir = promptops_dir / "prompts"
     snapshot = promptops_dir / "snapshot.json"
     if not prompts_dir.is_dir() and not snapshot.exists():
+        # In a git repo this is recoverable and often deliberate: `git rm` of
+        # the last prompt removes the directory, because git does not track
+        # empty ones. That state is empty, not broken, and FAIL is reserved
+        # for actually broken. Before v0.6.0 the pre-commit hook blocked
+        # deletions outright, so this was unreachable through the documented
+        # flow; unblocking them made it a Tuesday.
+        #
+        # Without .git/ there is no other source of prompts, so nothing can
+        # resolve and it is a genuine failure: that is a production image
+        # shipped without its snapshot.
+        if (repo / ".git").exists():
+            return Check(
+                name="structure",
+                status=CheckStatus.WARN,
+                message=(
+                    ".promptops/ has no prompts/ directory. Deleting the last "
+                    "prompt removes it, since git does not track empty "
+                    "directories."
+                ),
+                hint=(
+                    "Create a prompt with 'promptops create prompt <id>'. "
+                    "Past versions remain in git history."
+                ),
+            )
         return Check(
             name="structure",
             status=CheckStatus.FAIL,
             message=(
                 ".promptops/ exists but has neither a prompts/ directory nor "
-                "a snapshot.json, so no prompt can be resolved."
+                "a snapshot.json, and there is no .git/ to read history from, "
+                "so no prompt can be resolved."
             ),
             hint="Run 'promptops init repo', or ship a snapshot.json.",
         )

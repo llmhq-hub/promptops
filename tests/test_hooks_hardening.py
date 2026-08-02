@@ -171,3 +171,56 @@ class TestDoctorDetectsDeadHooks:
         check = _check(repo, "hooks")
 
         assert check.status is CheckStatus.WARN
+
+
+class TestDoctorOnARepoWithNoPromptsLeft:
+    """Deleting your last prompt is not a broken repository.
+
+    Before v0.6.0 the pre-commit hook blocked prompt deletions outright, so
+    this state was unreachable through the documented flow. Unblocking
+    deletion made it reachable, and `doctor` called it FAIL and exited 1,
+    because `git rm` of the last prompt removes `.promptops/prompts/` (git
+    does not track empty directories).
+
+    The check conflates two states: "PromptOps was never set up here", which
+    is a failure, and "set up, and currently has no prompts", which is a
+    Tuesday. FAIL is reserved for actually broken, per this module's own
+    status semantics.
+    """
+
+    def test_a_git_repo_with_no_prompts_left_warns_rather_than_fails(
+        self, repo: Path
+    ):
+        import shutil
+
+        shutil.rmtree(repo / ".promptops" / "prompts")
+
+        check = _check(repo, "structure")
+
+        assert check.status is CheckStatus.WARN, (
+            f"deleting the last prompt should not fail doctor: {check.message}"
+        )
+
+    def test_doctor_exits_zero_for_that_repo(self, repo: Path):
+        import shutil
+
+        from llmhq_promptops.core.health import CheckStatus as CS
+
+        shutil.rmtree(repo / ".promptops" / "prompts")
+
+        assert not any(c.status is CS.FAIL for c in run_all_checks(repo))
+
+    def test_a_runtime_with_no_prompts_and_no_snapshot_still_fails(
+        self, tmp_path: Path
+    ):
+        """No git, no prompts, no snapshot: nothing can resolve. That is broken."""
+        (tmp_path / ".promptops").mkdir()
+
+        check = _check(tmp_path, "structure")
+
+        assert check.status is CheckStatus.FAIL, check.message
+
+    def test_a_missing_promptops_directory_still_fails(self, tmp_path: Path):
+        check = _check(tmp_path, "structure")
+
+        assert check.status is CheckStatus.FAIL
