@@ -21,7 +21,7 @@ from typing import List, Dict, Optional, Tuple
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from llmhq_promptops.core.version_detector import SemanticVersionDetector, ChangeType
+from llmhq_promptops.core.impact import next_version
 from llmhq_promptops.core.template import PromptTemplate
 
 
@@ -53,21 +53,6 @@ class PreCommitHook:
         self.verbose = self.config.get("verbose", False)
         self.run_tests = self.config.get("pre_commit_tests", False)
         self.block_on_test_failure = self.config.get("block_on_test_failure", True)
-
-        # ``SemanticVersionDetector`` is heavyweight (regex compilation, diff
-        # tooling). Defer instantiation to the lazy ``self.detector`` property
-        # so commits that don't touch prompt files (e.g. ``[deploy]`` commits
-        # that only append to ``.promptops/deploys.jsonl``, or ordinary
-        # source-code commits) exit fast without paying that cost. M4
-        # explicitly targets this optimization to keep the deploy-event
-        # commit loop snappy.
-        self._detector: Optional[SemanticVersionDetector] = None
-
-    @property
-    def detector(self) -> SemanticVersionDetector:
-        if self._detector is None:
-            self._detector = SemanticVersionDetector()
-        return self._detector
 
     def run(self) -> int:
         """Run the pre-commit hook.
@@ -181,28 +166,29 @@ class PreCommitHook:
             
             # Parse current version
             current_version = self._extract_current_version(new_content)
-            
-            # Analyze changes
-            change = self.detector.analyze_prompt_changes(
-                old_content or "", 
-                new_content, 
-                current_version
+
+            # Grade the change. This is the same `core/impact.py` that
+            # `promptops test diff` uses, deliberately: the number stamped in
+            # here and the verdict `--exit-code` gates CI on must come from
+            # one place, or a repo running both gets two answers for one
+            # commit.
+            new_version, report = next_version(
+                current_version, old_content, new_content
             )
-            
+
             # Log change analysis
             self._log(f"📊 Change analysis for {prompt_file}:")
-            self._log(f"   Type: {change.change_type.value.upper()}")
-            self._log(f"   Version: {change.old_version} → {change.new_version}")
-            if change.reasons:
-                for reason in change.reasons[:3]:  # Show first 3 reasons
-                    self._log(f"   • {reason}")
-            
+            self._log(f"   Impact: {report.impact.value.upper()}")
+            self._log(f"   Version: {current_version} → {new_version}")
+            for change in report.changes[:3]:  # Show first 3 reasons
+                self._log(f"   • {change.detail}")
+
             # Update version in file if changed
-            if change.old_version != change.new_version:
-                updated_content = self._update_version_in_yaml(new_content, change.new_version)
+            if current_version != new_version:
+                updated_content = self._update_version_in_yaml(new_content, new_version)
                 if updated_content:
                     self._write_file(prompt_file, updated_content)
-                    self._log(f"✅ Updated version to {change.new_version}")
+                    self._log(f"✅ Updated version to {new_version}")
                 else:
                     self._log(f"⚠️  Failed to update version in {prompt_file}")
             else:
