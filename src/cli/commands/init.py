@@ -64,7 +64,11 @@ def repo(
     # Directory + config only (D9): write a default config unless one
     # already exists — re-running init must never clobber user settings.
     if not (root / ".promptops" / "config.yaml").exists():
-        _create_initial_config(False, True, False)
+        # (run_tests, generate_reports, verbose). generate_reports was True,
+        # which wrote `generate_reports: true` into every fresh config and so
+        # overrode the hook's own default. Reports write markdown files into
+        # the user's repository after every commit; that is opt-in.
+        _create_initial_config(False, False, False)
         typer.echo("✅ Created default .promptops/config.yaml")
 
     if with_hooks:

@@ -9,41 +9,19 @@ This hook:
 4. Updates logs and analytics
 """
 
-import os
 import sys
 import subprocess
-import json
 import yaml
 from pathlib import Path
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from llmhq_promptops.core.git_versioning import GitVersioning
-from llmhq_promptops.core.template import PromptTemplate
-from llmhq_promptops.prompt_manager import PromptManager
-
-
-# Stand-in values used to exercise the render path. The point is to reach the
-# renderer at all, not to produce meaningful text, so anything type-plausible
-# will do.
-_PLACEHOLDERS = {
-    "string": "example",
-    "str": "example",
-    "text": "example",
-    "number": 1,
-    "integer": 1,
-    "int": 1,
-    "float": 1.0,
-    "boolean": True,
-    "bool": True,
-    "list": [],
-    "array": [],
-    "dict": {},
-    "object": {},
-}
+from llmhq_promptops.core.impact import next_version
+from llmhq_promptops.core.template import validate_prompt_text
 
 
 class PostCommitHook:
@@ -299,10 +277,14 @@ class PostCommitHook:
                 return data["prompt"]["version"]
             
             return None
-            
-        except Exception:
+
+        except Exception as e:
+            # Was a bare `return None`. A prompt whose version cannot be read
+            # gets no tag, silently, which is exactly the shape of failure
+            # this release exists to remove.
+            self._log(f"Could not read a version from {prompt_file}: {e}")
             return None
-    
+
     def _detect_change_type(self, prompt_file: str) -> str:
         """Detect the type of change made to the prompt."""
         try:
@@ -326,40 +308,23 @@ class PostCommitHook:
             
             if prev_content.returncode != 0:
                 return "NEW"
-            
-            # Simple change detection
+
+            if not prev_content.stdout.strip():
+                # Nothing to compare against is what "NEW" means.
+                return "NEW"
+
             current_content = (self.repo_path / prompt_file).read_text()
-            
-            try:
-                prev_data = yaml.safe_load(prev_content.stdout)
-                curr_data = yaml.safe_load(current_content)
 
-                # An unparseable or empty previous revision means there is
-                # nothing to compare against, which is what "NEW" means.
-                # Calling .get() on None here raised AttributeError and the
-                # outer handler reported "UNKNOWN" instead.
-                if not isinstance(prev_data, dict):
-                    return "NEW"
-                if not isinstance(curr_data, dict):
-                    return "PATCH"
+            # Graded by core/impact.py, the same engine behind the pre-commit
+            # version bump and `promptops test diff`. This method used to
+            # carry its own rules (more variables => MINOR, fewer => MAJOR,
+            # anything else => PATCH), which made it a *third* answer to "what
+            # does this change break" and disagreed with both of the others.
+            _, report = next_version("v1.0.0", prev_content.stdout, current_content)
+            return report.impact.value.upper()
 
-                # Check for variable changes
-                prev_vars = prev_data.get('variables', {})
-                curr_vars = curr_data.get('variables', {})
-                
-                if set(prev_vars.keys()) != set(curr_vars.keys()):
-                    return "MINOR" if len(curr_vars) > len(prev_vars) else "MAJOR"
-                
-                # Check template changes
-                if prev_data.get('template') != curr_data.get('template'):
-                    return "PATCH"
-                
-                return "PATCH"
-                
-            except yaml.YAMLError:
-                return "PATCH"
-                
-        except Exception:
+        except Exception as e:
+            self._log(f"Could not classify the change to {prompt_file}: {e}")
             return "UNKNOWN"
     
     def _get_current_commit_hash(self) -> str:
@@ -379,41 +344,14 @@ class PostCommitHook:
     def _validate_prompt(self, prompt_file: str) -> Tuple[bool, str]:
         """Is this prompt usable? Returns (ok, detail).
 
-        Deliberately **not** ``render({})``. That is what this check used to
-        do, and rendering with no variables fails by construction for any
-        prompt declaring a required one:
-
-            PROMPTOPS_E014: Required variable 'name' not provided
-
-        Since ``post_commit_tests`` defaults to on, every user saw that red
-        mark on every commit. A check that cannot pass teaches people to
-        ignore everything the tool prints, which is worse than no check.
-
-        What it was reaching for is three things that can genuinely be wrong:
-        the YAML parses into a prompt, the Jinja source compiles (the
-        ``.template`` property is what triggers that; constructing a
-        ``PromptTemplate`` alone does not), and the template renders when
-        given values for the variables it declares.
+        Delegates to ``core/template.py::validate_prompt_text``, which the
+        pre-commit hook also uses, so "valid" means one thing rather than two.
         """
         try:
-            full_path = self.repo_path / prompt_file
-            template = PromptTemplate(full_path.read_text())
-            template.template  # compiles the Jinja source; raises on bad syntax
-            template.render(self._sample_variables(template))
-            return True, ""
-        except Exception as e:
+            content = (self.repo_path / prompt_file).read_text()
+        except OSError as e:
             return False, str(e)
-
-    @staticmethod
-    def _sample_variables(template: PromptTemplate) -> Dict[str, Any]:
-        """A plausible value for every declared variable."""
-        sample: Dict[str, Any] = {}
-        for name, var in template.variables.items():
-            if var.default is not None:
-                sample[name] = var.default
-            else:
-                sample[name] = _PLACEHOLDERS.get(str(var.type).lower(), "example")
-        return sample
+        return validate_prompt_text(content)
 
     def _run_post_commit_tests(self, prompt_files: List[str]):
         """Validate each changed prompt after the commit."""
@@ -442,8 +380,13 @@ class PostCommitHook:
             try:
                 with open(config_file) as f:
                     return yaml.safe_load(f) or {}
-            except Exception:
-                pass
+            except Exception as e:
+                # Falling back to defaults is right; doing it silently is not.
+                # The user edited this file expecting it to take effect.
+                print(
+                    f"[promptops] Ignoring unreadable {config_file}: {e}",
+                    file=sys.stderr,
+                )
         
         # Default configuration
         return {

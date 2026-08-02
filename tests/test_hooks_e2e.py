@@ -145,7 +145,8 @@ class TestHookGitPlumbing:
         result = hook._detect_change_type(".promptops/prompts/greeting.yaml")
 
         assert result != "UNKNOWN", "change detection fell into its except handler"
-        assert result in {"NEW", "MAJOR", "MINOR", "PATCH"}
+        assert result in {"NEW", "DELETED", "NONE", "PATCH", "MINOR", "MAJOR"}
+        assert result == "PATCH", "prose moved and nothing else did"
 
     def test_staged_deletions_are_not_offered_for_versioning(
         self, repo_with_prompt: Path

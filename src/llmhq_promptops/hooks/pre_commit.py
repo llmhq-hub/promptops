@@ -16,13 +16,13 @@ import sys
 import yaml
 import subprocess
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from llmhq_promptops.core.impact import next_version
-from llmhq_promptops.core.template import PromptTemplate
+from llmhq_promptops.core.template import PromptTemplate, validate_prompt_text
 
 
 # A ``version:`` entry nested under a top-level key. The trailing group keeps
@@ -462,23 +462,26 @@ class PreCommitHook:
                 file_name = Path(file_path).stem
                 prompt_ids.append(file_name)
             
-            # Run basic validation tests
+            # Run basic validation tests. Shares `validate_prompt_text` with
+            # the post-commit hook: this path used to render with `{}`, which
+            # fails by construction for any prompt with a required variable.
             all_passed = True
             for prompt_id in prompt_ids:
+                path = self.repo_path / f".promptops/prompts/{prompt_id}.yaml"
                 try:
-                    # Basic template rendering test
-                    template = PromptTemplate(
-                        (self.repo_path / f".promptops/prompts/{prompt_id}.yaml").read_text()
-                    )
-                    
-                    # Try rendering with empty variables
-                    template.render({})
-                    self._log(f"✅ {prompt_id}: Basic validation passed")
-                    
-                except Exception as e:
-                    self._log(f"❌ {prompt_id}: Test failed - {e}")
+                    content = path.read_text()
+                except OSError as e:
+                    self._log(f"❌ {prompt_id}: could not read {path.name} - {e}")
                     all_passed = False
-            
+                    continue
+
+                ok, detail = validate_prompt_text(content)
+                if ok:
+                    self._log(f"✅ {prompt_id}: Basic validation passed")
+                else:
+                    self._log(f"❌ {prompt_id}: Test failed - {detail}")
+                    all_passed = False
+
             return all_passed
             
         except Exception as e:
@@ -493,8 +496,13 @@ class PreCommitHook:
             try:
                 with open(config_file) as f:
                     return yaml.safe_load(f) or {}
-            except Exception:
-                pass
+            except Exception as e:
+                # Falling back to defaults is right; doing it silently is not.
+                # The user edited this file expecting it to take effect.
+                print(
+                    f"[promptops] Ignoring unreadable {config_file}: {e}",
+                    file=sys.stderr,
+                )
         
         # Default configuration
         return {
