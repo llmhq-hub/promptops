@@ -11,17 +11,33 @@ This hook:
 """
 
 import os
+import re
 import sys
 import yaml
 import subprocess
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from llmhq_promptops.core.version_detector import SemanticVersionDetector, ChangeType
-from llmhq_promptops.core.template import PromptTemplate
+from llmhq_promptops.core.impact import next_version
+from llmhq_promptops.core.template import PromptTemplate, validate_prompt_text
+
+
+# A ``version:`` entry nested under a top-level key. The trailing group keeps
+# any end-of-line comment, so ``version: v1.0.0  # pinned`` stays pinned.
+_VERSION_LINE_RE = re.compile(
+    r"^(?P<indent>[ \t]+)version:(?P<sep>[ \t]+)"
+    r"(?P<value>[^#\n]*?)(?P<trail>[ \t]*(?:#.*)?)$"
+)
+
+# A key at column zero, which is what changes "which section am I in".
+_TOP_LEVEL_KEY_RE = re.compile(r"^(?P<key>[A-Za-z_][\w.-]*)[ \t]*:")
+
+# Sections that may carry the version, in precedence order: the current schema
+# first, then the legacy one.
+_VERSION_SECTIONS = ("metadata", "prompt")
 
 
 class PreCommitHook:
@@ -37,21 +53,6 @@ class PreCommitHook:
         self.verbose = self.config.get("verbose", False)
         self.run_tests = self.config.get("pre_commit_tests", False)
         self.block_on_test_failure = self.config.get("block_on_test_failure", True)
-
-        # ``SemanticVersionDetector`` is heavyweight (regex compilation, diff
-        # tooling). Defer instantiation to the lazy ``self.detector`` property
-        # so commits that don't touch prompt files (e.g. ``[deploy]`` commits
-        # that only append to ``.promptops/deploys.jsonl``, or ordinary
-        # source-code commits) exit fast without paying that cost. M4
-        # explicitly targets this optimization to keep the deploy-event
-        # commit loop snappy.
-        self._detector: Optional[SemanticVersionDetector] = None
-
-    @property
-    def detector(self) -> SemanticVersionDetector:
-        if self._detector is None:
-            self._detector = SemanticVersionDetector()
-        return self._detector
 
     def run(self) -> int:
         """Run the pre-commit hook.
@@ -115,9 +116,14 @@ class PreCommitHook:
     def _get_staged_prompt_files(self) -> List[str]:
         """Get list of staged prompt files."""
         try:
-            # Get staged files
+            # Get staged files. "--diff-filter=d" (lowercase, meaning
+            # *exclude*) drops staged deletions: a deleted prompt has no
+            # staged content, so `git show :path` fails, the working-directory
+            # fallback finds nothing, and _process_prompt_file returns False,
+            # which blocks the commit. Removing a prompt is ordinary work and
+            # must not be blocked, and there is nothing to version anyway.
             result = subprocess.run(
-                ["git", "diff", "--cached", "--name-only"],
+                ["git", "diff", "--cached", "--name-only", "--diff-filter=d"],
                 cwd=self.repo_path,
                 capture_output=True,
                 text=True,
@@ -160,28 +166,29 @@ class PreCommitHook:
             
             # Parse current version
             current_version = self._extract_current_version(new_content)
-            
-            # Analyze changes
-            change = self.detector.analyze_prompt_changes(
-                old_content or "", 
-                new_content, 
-                current_version
+
+            # Grade the change. This is the same `core/impact.py` that
+            # `promptops test diff` uses, deliberately: the number stamped in
+            # here and the verdict `--exit-code` gates CI on must come from
+            # one place, or a repo running both gets two answers for one
+            # commit.
+            new_version, report = next_version(
+                current_version, old_content, new_content
             )
-            
+
             # Log change analysis
             self._log(f"📊 Change analysis for {prompt_file}:")
-            self._log(f"   Type: {change.change_type.value.upper()}")
-            self._log(f"   Version: {change.old_version} → {change.new_version}")
-            if change.reasons:
-                for reason in change.reasons[:3]:  # Show first 3 reasons
-                    self._log(f"   • {reason}")
-            
+            self._log(f"   Impact: {report.impact.value.upper()}")
+            self._log(f"   Version: {current_version} → {new_version}")
+            for change in report.changes[:3]:  # Show first 3 reasons
+                self._log(f"   • {change.detail}")
+
             # Update version in file if changed
-            if change.old_version != change.new_version:
-                updated_content = self._update_version_in_yaml(new_content, change.new_version)
+            if current_version != new_version:
+                updated_content = self._update_version_in_yaml(new_content, new_version)
                 if updated_content:
                     self._write_file(prompt_file, updated_content)
-                    self._log(f"✅ Updated version to {change.new_version}")
+                    self._log(f"✅ Updated version to {new_version}")
                 else:
                     self._log(f"⚠️  Failed to update version in {prompt_file}")
             else:
@@ -202,7 +209,12 @@ class PreCommitHook:
         """Get file content from HEAD commit."""
         try:
             result = subprocess.run(
-                ["git", "show", "--", f"HEAD:{file_path}"],
+                # No "--" separator here. It marks everything after it as a
+                # PATHSPEC, so "HEAD:path" stops being parsed as a revision
+                # and git exits 0 with empty output. The revision itself is
+                # not attacker-controlled: file_path comes from
+                # `git diff --cached --name-only`, i.e. from git.
+                ["git", "show", f"HEAD:{file_path}"],
                 cwd=self.repo_path,
                 capture_output=True,
                 text=True,
@@ -217,7 +229,9 @@ class PreCommitHook:
         """Get file content from git index (staged)."""
         try:
             result = subprocess.run(
-                ["git", "show", "--", f":{file_path}"],
+                # See the note above: ":path" is a revision (the index), not
+                # a pathspec, so it must not sit behind a "--".
+                ["git", "show", f":{file_path}"],
                 cwd=self.repo_path,
                 capture_output=True,
                 text=True,
@@ -235,7 +249,14 @@ class PreCommitHook:
         """Extract current version from YAML content."""
         try:
             data = yaml.safe_load(content)
-            
+
+            # yaml.safe_load returns None for empty or comment-only input, and
+            # a scalar for a bare value. "metadata" in None raises TypeError,
+            # which `except yaml.YAMLError` below does not catch, so it
+            # escaped to the caller and blocked the commit.
+            if not isinstance(data, dict):
+                return "v1.0.0"
+
             # Try new format first
             if "metadata" in data and "version" in data["metadata"]:
                 return data["metadata"]["version"]
@@ -251,27 +272,124 @@ class PreCommitHook:
             return "v1.0.0"
     
     def _update_version_in_yaml(self, content: str, new_version: str) -> Optional[str]:
-        """Update version in YAML content."""
+        """Rewrite the version field, and nothing else.
+
+        This used to round-trip the document through ``yaml.safe_load`` and
+        ``yaml.dump`` to change one field. That silently deleted every comment
+        in the file and reserialized ``template: |`` block scalars into quoted
+        strings, on every commit, to every prompt. The comment naming a
+        prompt's owner is frequently the most valuable line in it, and a tool
+        that deletes it while claiming to bump a version number has not earned
+        the right to run on someone's commits.
+
+        So the edit is textual and targeted: find the version *line*, replace
+        its value, leave every other byte alone. When the file's shape makes
+        that impossible (a flow mapping, say), return None so the caller warns
+        and leaves the file untouched. Refusing is the correct failure mode;
+        falling back to a reserialization would be the original bug wearing a
+        disguise.
+        """
         try:
             data = yaml.safe_load(content)
-            
-            # Update version in metadata (preferred)
-            if "metadata" in data:
-                data["metadata"]["version"] = new_version
-            elif "prompt" in data:
-                # Legacy format
-                data["prompt"]["version"] = new_version
-            else:
-                # Add metadata section
-                data["metadata"] = data.get("metadata", {})
-                data["metadata"]["version"] = new_version
-            
-            # Convert back to YAML with formatting
-            return yaml.dump(data, default_flow_style=False, sort_keys=False, indent=2)
-            
         except yaml.YAMLError as e:
-            self._log(f"Failed to update YAML: {e}")
+            self._log(f"Failed to parse YAML: {e}")
             return None
+
+        if not isinstance(data, dict):
+            self._log("Prompt is not a YAML mapping, leaving it untouched")
+            return None
+
+        lines = content.splitlines()
+        updated = self._rewrite_version_line(lines, new_version)
+
+        if updated is None:
+            if self._declares_a_version(data):
+                # It has a version, but not as a line we can safely edit.
+                self._log(
+                    "Could not locate an editable version line, "
+                    "leaving the file untouched"
+                )
+                return None
+            updated = self._insert_version_line(lines, new_version)
+
+        if updated is None:
+            return None
+
+        # Preserve the original trailing newline, since rewriting a file
+        # without one is its own small act of vandalism.
+        result = "\n".join(updated)
+        if content.endswith("\n"):
+            result += "\n"
+
+        # The edit must both parse and mean what was intended. Reusing the
+        # reader as the check keeps the two definitions of "the version" from
+        # drifting apart.
+        if self._extract_current_version(result) != new_version:
+            self._log("Version rewrite did not take effect, leaving the file untouched")
+            return None
+
+        return result
+
+    @staticmethod
+    def _declares_a_version(data: Dict) -> bool:
+        """Does this document already carry a version anywhere we look for one?"""
+        for section in _VERSION_SECTIONS:
+            block = data.get(section)
+            if isinstance(block, dict) and "version" in block:
+                return True
+        return False
+
+    @staticmethod
+    def _rewrite_version_line(
+        lines: List[str], new_version: str
+    ) -> Optional[List[str]]:
+        """Replace the value on an existing version line, preserving comments."""
+        for wanted in _VERSION_SECTIONS:
+            section = None
+            for index, line in enumerate(lines):
+                top_level = _TOP_LEVEL_KEY_RE.match(line)
+                if top_level:
+                    section = top_level.group("key")
+                    continue
+                if section != wanted:
+                    continue
+                match = _VERSION_LINE_RE.match(line)
+                if match:
+                    out = list(lines)
+                    out[index] = (
+                        f"{match.group('indent')}version:"
+                        f"{match.group('sep')}{new_version}"
+                        f"{match.group('trail')}"
+                    )
+                    return out
+        return None
+
+    @staticmethod
+    def _insert_version_line(
+        lines: List[str], new_version: str
+    ) -> Optional[List[str]]:
+        """Add a version to a prompt that has none, without moving anything."""
+        for wanted in _VERSION_SECTIONS:
+            for index, line in enumerate(lines):
+                top_level = _TOP_LEVEL_KEY_RE.match(line)
+                if not top_level or top_level.group("key") != wanted:
+                    continue
+                # Match the indentation the section already uses, so the
+                # insert is invisible in review apart from the new line.
+                indent = "  "
+                for following in lines[index + 1:]:
+                    if not following.strip():
+                        continue
+                    leading = following[: len(following) - len(following.lstrip())]
+                    if leading:
+                        indent = leading
+                    break
+                out = list(lines)
+                out.insert(index + 1, f"{indent}version: {new_version}")
+                return out
+
+        # No section to put it in: append one rather than reordering the file.
+        return list(lines) + ["metadata:", f"  version: {new_version}"]
     
     def _write_file(self, file_path: str, content: str):
         """Write content to file atomically."""
@@ -296,17 +414,27 @@ class PreCommitHook:
             raise
     
     def _validate_prompt_syntax(self, content: str) -> bool:
-        """Validate prompt YAML syntax and structure."""
+        """Validate prompt YAML syntax and structure.
+
+        Constructing a ``PromptTemplate`` parses the YAML but does *not*
+        compile the Jinja source: ``PromptTemplate.template`` is a lazy
+        property. So this method claimed to validate syntax while letting an
+        unclosed ``{% if %}`` straight through to production, where it fails
+        at render time. Touching the property compiles it, which is the whole
+        point of a pre-commit check on a guaranteed-broken template.
+        """
         try:
             # Basic YAML validation
             data = yaml.safe_load(content)
-            
+
             # Try to create PromptTemplate (this validates structure)
             template = PromptTemplate(content)
-            
-            # Basic validation passed
+
+            # Compile the Jinja source. Syntax errors raise here.
+            template.template
+
             return True
-            
+
         except Exception as e:
             self._log(f"Validation failed: {e}")
             return False
@@ -334,23 +462,26 @@ class PreCommitHook:
                 file_name = Path(file_path).stem
                 prompt_ids.append(file_name)
             
-            # Run basic validation tests
+            # Run basic validation tests. Shares `validate_prompt_text` with
+            # the post-commit hook: this path used to render with `{}`, which
+            # fails by construction for any prompt with a required variable.
             all_passed = True
             for prompt_id in prompt_ids:
+                path = self.repo_path / f".promptops/prompts/{prompt_id}.yaml"
                 try:
-                    # Basic template rendering test
-                    template = PromptTemplate(
-                        (self.repo_path / f".promptops/prompts/{prompt_id}.yaml").read_text()
-                    )
-                    
-                    # Try rendering with empty variables
-                    template.render({})
-                    self._log(f"✅ {prompt_id}: Basic validation passed")
-                    
-                except Exception as e:
-                    self._log(f"❌ {prompt_id}: Test failed - {e}")
+                    content = path.read_text()
+                except OSError as e:
+                    self._log(f"❌ {prompt_id}: could not read {path.name} - {e}")
                     all_passed = False
-            
+                    continue
+
+                ok, detail = validate_prompt_text(content)
+                if ok:
+                    self._log(f"✅ {prompt_id}: Basic validation passed")
+                else:
+                    self._log(f"❌ {prompt_id}: Test failed - {detail}")
+                    all_passed = False
+
             return all_passed
             
         except Exception as e:
@@ -365,8 +496,13 @@ class PreCommitHook:
             try:
                 with open(config_file) as f:
                     return yaml.safe_load(f) or {}
-            except Exception:
-                pass
+            except Exception as e:
+                # Falling back to defaults is right; doing it silently is not.
+                # The user edited this file expecting it to take effect.
+                print(
+                    f"[promptops] Ignoring unreadable {config_file}: {e}",
+                    file=sys.stderr,
+                )
         
         # Default configuration
         return {

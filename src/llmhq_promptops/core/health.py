@@ -17,10 +17,11 @@ Status semantics matter for the exit code:
 from __future__ import annotations
 
 import json
+import subprocess
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 class CheckStatus(Enum):
@@ -61,12 +62,37 @@ def _check_structure(repo: Path) -> Check:
     prompts_dir = promptops_dir / "prompts"
     snapshot = promptops_dir / "snapshot.json"
     if not prompts_dir.is_dir() and not snapshot.exists():
+        # In a git repo this is recoverable and often deliberate: `git rm` of
+        # the last prompt removes the directory, because git does not track
+        # empty ones. That state is empty, not broken, and FAIL is reserved
+        # for actually broken. Before v0.6.0 the pre-commit hook blocked
+        # deletions outright, so this was unreachable through the documented
+        # flow; unblocking them made it a Tuesday.
+        #
+        # Without .git/ there is no other source of prompts, so nothing can
+        # resolve and it is a genuine failure: that is a production image
+        # shipped without its snapshot.
+        if (repo / ".git").exists():
+            return Check(
+                name="structure",
+                status=CheckStatus.WARN,
+                message=(
+                    ".promptops/ has no prompts/ directory. Deleting the last "
+                    "prompt removes it, since git does not track empty "
+                    "directories."
+                ),
+                hint=(
+                    "Create a prompt with 'promptops create prompt <id>'. "
+                    "Past versions remain in git history."
+                ),
+            )
         return Check(
             name="structure",
             status=CheckStatus.FAIL,
             message=(
                 ".promptops/ exists but has neither a prompts/ directory nor "
-                "a snapshot.json, so no prompt can be resolved."
+                "a snapshot.json, and there is no .git/ to read history from, "
+                "so no prompt can be resolved."
             ),
             hint="Run 'promptops init repo', or ship a snapshot.json.",
         )
@@ -127,11 +153,85 @@ def _check_hooks(repo: Path) -> Check:
             ),
         )
 
+    dead = _dead_hook_interpreter(hooks_dir, installed)
+    if dead is not None:
+        interpreter, detail = dead
+        return Check(
+            name="hooks",
+            status=CheckStatus.FAIL,
+            message=(
+                f"PromptOps hooks are installed but cannot run: {interpreter} "
+                f"cannot import llmhq_promptops ({detail})."
+            ),
+            hint=(
+                "The hook scripts start with '#!/usr/bin/env python3', so PATH "
+                "decides which interpreter runs them. Install PromptOps into "
+                "that interpreter, or reinstall the hooks from the environment "
+                "you commit from: 'promptops hooks install'."
+            ),
+        )
+
     return Check(
         name="hooks",
         status=CheckStatus.OK,
         message=f"PromptOps hooks installed: {', '.join(sorted(installed))}.",
     )
+
+
+def _dead_hook_interpreter(
+    hooks_dir: Path, installed: List[str]
+) -> Optional[Tuple[str, str]]:
+    """Can the interpreter in the hook's shebang import PromptOps?
+
+    ``doctor`` reported "hooks installed" for six releases while the hooks
+    were broken, because it checked that the files existed and never that they
+    could run. A green check that cannot go red is the same failure as a test
+    that cannot fail.
+
+    The common real-world case: PromptOps is installed in a venv, the hooks
+    are installed from inside it, and then commits happen from a shell where
+    the venv is not active. ``#!/usr/bin/env python3`` resolves to a different
+    interpreter and every commit errors while doctor calls it healthy.
+
+    Returns ``(interpreter, detail)`` for the first dead hook, or None when
+    they all import cleanly or the question cannot be answered.
+    """
+    for name in installed:
+        try:
+            first_line = (
+                (hooks_dir / name)
+                .read_text(encoding="utf-8", errors="ignore")
+                .splitlines()[0]
+            )
+        except (OSError, IndexError):
+            continue
+
+        if not first_line.startswith("#!"):
+            continue
+
+        argv = first_line[2:].split()
+        if not argv:
+            continue
+        # "#!/usr/bin/env python3" has to be resolved through env, exactly as
+        # git will resolve it.
+        command = argv + ["-c", "import llmhq_promptops"]
+
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+        except (OSError, subprocess.SubprocessError):
+            # Cannot answer the question; do not invent an answer.
+            continue
+
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip().splitlines()
+            return " ".join(argv), (detail[-1] if detail else "no output")
+
+    return None
 
 
 def _check_snapshot(repo: Path) -> Check:

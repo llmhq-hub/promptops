@@ -1,10 +1,35 @@
 # cli/main.py
+from typing import Optional
+
 import typer
+
+import llmhq_promptops
 from cli.commands import init, create, render
 from cli.commands import test, hooks, migrate, deploy, snapshot, blame, backfill_deploys
 from cli.commands import history, doctor
 
 app = typer.Typer(rich_markup_mode=None)
+
+
+def _version(value: bool) -> None:
+    if value:
+        typer.echo(f"promptops {llmhq_promptops.__version__}")
+        raise typer.Exit()
+
+
+@app.callback()
+def main(
+    version: Optional[bool] = typer.Option(
+        None,
+        "--version",
+        "-V",
+        callback=_version,
+        is_eager=True,
+        help="Show the installed PromptOps version and exit.",
+    ),
+) -> None:
+    """Git-native prompt versioning, incident archaeology, and a
+    production runtime that needs neither .git/ nor the git binary."""
 
 app.add_typer(init.app, name="init", help="Initialize promptops structure")
 app.add_typer(create.app, name="create", help="Create a new prompt template")

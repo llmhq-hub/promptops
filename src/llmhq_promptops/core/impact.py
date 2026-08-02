@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Dict, List, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .template import PromptTemplate, VariableDefinition
@@ -240,3 +240,69 @@ def compute_impact(
         return ImpactReport(impact=SemverImpact.PATCH)
 
     return ImpactReport(impact=SemverImpact.NONE)
+
+
+def bump(current: str, impact: SemverImpact) -> str:
+    """Apply ``impact`` to a version string.
+
+    Returns ``current`` unchanged for NONE, and also when the version cannot
+    be parsed: leaving someone's odd version string alone beats inventing a
+    number for it.
+    """
+    if impact is SemverImpact.NONE:
+        return current
+
+    try:
+        parts = [int(piece) for piece in current.lstrip("v").split(".")]
+    except ValueError:
+        return current
+    if not parts:
+        return current
+
+    while len(parts) < 3:
+        parts.append(0)
+    major, minor, patch = parts[0], parts[1], parts[2]
+
+    if impact is SemverImpact.MAJOR:
+        major, minor, patch = major + 1, 0, 0
+    elif impact is SemverImpact.MINOR:
+        minor, patch = minor + 1, 0
+    else:
+        patch += 1
+
+    return f"v{major}.{minor}.{patch}"
+
+
+def next_version(
+    current: str, old_text: Optional[str], new_text: str
+) -> Tuple[str, ImpactReport]:
+    """The version a prompt should carry after this change, and why.
+
+    This is the single entry point the git hooks use, so that the number
+    stamped into a prompt at commit time and the verdict
+    ``promptops test diff --exit-code`` gates CI on are produced by the same
+    code. They used to be produced by two independent graders that disagreed
+    on adding a required variable and on changing a variable's type, in both
+    cases with the hook under-grading a breaking change.
+
+    ``old_text`` of None (or empty) means the prompt is new. Nothing is bumped
+    in that case: there is nothing for a first commit to be backward
+    incompatible with, and grading a new prompt's initial variables as
+    "additions" compares it against an empty document that never existed.
+    """
+    from .template import PromptTemplate
+
+    if not old_text or not old_text.strip():
+        return current, ImpactReport(impact=SemverImpact.NONE)
+
+    try:
+        old = PromptTemplate(old_text)
+        new = PromptTemplate(new_text)
+    except Exception:
+        # An unreadable revision cannot be compared. Do not guess: the
+        # pre-commit hook validates the new content separately and will
+        # block on it if it is the broken one.
+        return current, ImpactReport(impact=SemverImpact.NONE)
+
+    report = compute_impact(old, new)
+    return bump(current, report.impact), report

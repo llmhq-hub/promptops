@@ -251,3 +251,63 @@ class PromptTemplate:
         """Create PromptTemplate from YAML file."""
         content = file_path.read_text()
         return cls(content)
+
+
+# Stand-in values used to exercise the render path. The point is to reach the
+# renderer at all, not to produce meaningful text, so anything type-plausible
+# will do. Types are matched so that a template doing arithmetic on a number
+# variable is not failed by a string placeholder.
+_PLACEHOLDERS: Dict[str, Any] = {
+    "string": "example",
+    "str": "example",
+    "text": "example",
+    "number": 1,
+    "integer": 1,
+    "int": 1,
+    "float": 1.0,
+    "boolean": True,
+    "bool": True,
+    "list": [],
+    "array": [],
+    "dict": {},
+    "object": {},
+}
+
+
+def sample_variables(template: 'PromptTemplate') -> Dict[str, Any]:
+    """A plausible value for every variable the template declares."""
+    sample: Dict[str, Any] = {}
+    for name, var in template.variables.items():
+        if var.default is not None:
+            sample[name] = var.default
+        else:
+            sample[name] = _PLACEHOLDERS.get(str(var.type).lower(), "example")
+    return sample
+
+
+def validate_prompt_text(yaml_content: str) -> tuple:
+    """Is this prompt usable? Returns ``(ok, detail)``.
+
+    Both git hooks call this, so "valid" means one thing rather than two.
+    They previously each rendered with ``{}``, which fails by construction for
+    any prompt declaring a required variable:
+
+        PROMPTOPS_E014: Required variable 'name' not provided
+
+    Since the post-commit check defaults to on, every user saw that red mark
+    on every commit. A check that cannot pass teaches people to ignore
+    everything the tool prints.
+
+    Three things can genuinely be wrong, and these are they: the YAML does not
+    parse into a prompt, the Jinja source does not compile (the ``.template``
+    property is what triggers compilation; constructing a ``PromptTemplate``
+    alone does not), or the template raises when rendered with values for the
+    variables it declares.
+    """
+    try:
+        template = PromptTemplate(yaml_content)
+        template.template  # compiles the Jinja source; raises on bad syntax
+        template.render(sample_variables(template))
+        return True, ""
+    except Exception as e:
+        return False, str(e)

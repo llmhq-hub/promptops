@@ -9,20 +9,19 @@ This hook:
 4. Updates logs and analytics
 """
 
-import os
 import sys
 import subprocess
-import json
 import yaml
 from pathlib import Path
 from datetime import datetime
-from typing import List, Dict, Optional
+from typing import Dict, List, Optional, Tuple
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from llmhq_promptops.core.git_versioning import GitVersioning
-from llmhq_promptops.prompt_manager import PromptManager
+from llmhq_promptops.core.impact import next_version
+from llmhq_promptops.core.template import validate_prompt_text
 
 
 class PostCommitHook:
@@ -39,7 +38,9 @@ class PostCommitHook:
         self.verbose = self.config.get("verbose", False)
         self.auto_tag = self.config.get("auto_tag_versions", True)
         self.run_tests = self.config.get("post_commit_tests", True)
-        self.generate_reports = self.config.get("generate_reports", True)
+        # Off by default: writing files into someone's repository after every
+        # commit is opt-in behavior, not a sensible default.
+        self.generate_reports = self.config.get("generate_reports", False)
     
     def run(self) -> int:
         """Run the post-commit hook.
@@ -84,9 +85,16 @@ class PostCommitHook:
     def _get_changed_prompt_files(self) -> List[str]:
         """Get list of prompt files changed in the current commit."""
         try:
-            # Get files changed in HEAD commit
+            # Get files changed in HEAD commit.
+            #
+            # "--root" is what makes this work on the *first* commit in a
+            # repository. A root commit has no parent, so without it git
+            # prints nothing and exits 0, and that silence read as "no prompt
+            # files changed" and skipped versioning altogether. The first
+            # commit of a new repo is exactly the path a first-time user
+            # takes. On any other commit the flag is a no-op.
             result = subprocess.run(
-                ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"],
+                ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", "--root", "HEAD"],
                 cwd=self.repo_path,
                 capture_output=True,
                 text=True,
@@ -115,7 +123,13 @@ class PostCommitHook:
                 version = self._get_prompt_version(prompt_file)
                 
                 if version:
-                    tag_name = f"{prompt_id}-{version}"
+                    # "prompt-<id>-v1.2.3" is the one per-prompt format the
+                    # SDK reads (GitVersioning._get_tag_version), and the one
+                    # `promptops migrate tag-history` writes. The hook used to
+                    # emit "<id>-v1.2.3", which matches neither, so every tag
+                    # auto-versioning ever created was invisible to history,
+                    # blame, and version resolution.
+                    tag_name = f"prompt-{prompt_id}-{version}"
                     
                     # Check if tag already exists ('--' so a crafted
                     # tag_name can't inject a git option; the write path
@@ -160,14 +174,10 @@ class PostCommitHook:
             
             # Update index file
             self._update_reports_index(reports_dir, report_file, prompt_files)
-            
-            # Add reports to git
-            subprocess.run(
-                ["git", "add", str(reports_dir)],
-                cwd=self.repo_path,
-                check=True
-            )
-            
+
+            # Deliberately NOT `git add`-ed. Staging files the user never
+            # touched meant their *next* commit silently carried report files
+            # they had not asked for. What to do with these is their call.
             self._log(f"📊 Generated report: {report_file.relative_to(self.repo_path)}")
             
         except Exception as e:
@@ -251,7 +261,13 @@ class PostCommitHook:
                 return None
                 
             data = yaml.safe_load(full_path.read_text())
-            
+
+            # None for an empty or comment-only file; "metadata" in None
+            # raises TypeError, which the bare except below would turn into a
+            # silent None rather than surfacing the real problem.
+            if not isinstance(data, dict):
+                return None
+
             # Try new format first
             if "metadata" in data and "version" in data["metadata"]:
                 return data["metadata"]["version"]
@@ -261,16 +277,30 @@ class PostCommitHook:
                 return data["prompt"]["version"]
             
             return None
-            
-        except Exception:
+
+        except Exception as e:
+            # Was a bare `return None`. A prompt whose version cannot be read
+            # gets no tag, silently, which is exactly the shape of failure
+            # this release exists to remove.
+            self._log(f"Could not read a version from {prompt_file}: {e}")
             return None
-    
+
     def _detect_change_type(self, prompt_file: str) -> str:
         """Detect the type of change made to the prompt."""
         try:
+            # A prompt removed in this commit has no file left to read. Say so
+            # rather than letting the read below raise FileNotFoundError into
+            # the handler at the bottom, which reported "UNKNOWN" and lost the
+            # one fact worth reporting.
+            if not (self.repo_path / prompt_file).exists():
+                return "DELETED"
+
             # Get previous version of file
             prev_content = subprocess.run(
-                ["git", "show", "--", f"HEAD~1:{prompt_file}"],
+                # No "--": "HEAD~1:path" is a revision, and behind a "--" git
+                # reads it as a pathspec and exits 0 with empty output. That
+                # silence is why this returned "UNKNOWN" for every change.
+                ["git", "show", f"HEAD~1:{prompt_file}"],
                 capture_output=True,
                 text=True,
                 cwd=self.repo_path
@@ -278,31 +308,23 @@ class PostCommitHook:
             
             if prev_content.returncode != 0:
                 return "NEW"
-            
-            # Simple change detection
+
+            if not prev_content.stdout.strip():
+                # Nothing to compare against is what "NEW" means.
+                return "NEW"
+
             current_content = (self.repo_path / prompt_file).read_text()
-            
-            try:
-                prev_data = yaml.safe_load(prev_content.stdout)
-                curr_data = yaml.safe_load(current_content)
-                
-                # Check for variable changes
-                prev_vars = prev_data.get('variables', {})
-                curr_vars = curr_data.get('variables', {})
-                
-                if set(prev_vars.keys()) != set(curr_vars.keys()):
-                    return "MINOR" if len(curr_vars) > len(prev_vars) else "MAJOR"
-                
-                # Check template changes
-                if prev_data.get('template') != curr_data.get('template'):
-                    return "PATCH"
-                
-                return "PATCH"
-                
-            except yaml.YAMLError:
-                return "PATCH"
-                
-        except Exception:
+
+            # Graded by core/impact.py, the same engine behind the pre-commit
+            # version bump and `promptops test diff`. This method used to
+            # carry its own rules (more variables => MINOR, fewer => MAJOR,
+            # anything else => PATCH), which made it a *third* answer to "what
+            # does this change break" and disagreed with both of the others.
+            _, report = next_version("v1.0.0", prev_content.stdout, current_content)
+            return report.impact.value.upper()
+
+        except Exception as e:
+            self._log(f"Could not classify the change to {prompt_file}: {e}")
             return "UNKNOWN"
     
     def _get_current_commit_hash(self) -> str:
@@ -319,21 +341,34 @@ class PostCommitHook:
         except subprocess.CalledProcessError:
             return "unknown"
     
+    def _validate_prompt(self, prompt_file: str) -> Tuple[bool, str]:
+        """Is this prompt usable? Returns (ok, detail).
+
+        Delegates to ``core/template.py::validate_prompt_text``, which the
+        pre-commit hook also uses, so "valid" means one thing rather than two.
+        """
+        try:
+            content = (self.repo_path / prompt_file).read_text()
+        except OSError as e:
+            return False, str(e)
+        return validate_prompt_text(content)
+
     def _run_post_commit_tests(self, prompt_files: List[str]):
-        """Run tests after commit."""
+        """Validate each changed prompt after the commit."""
         try:
             self._log("🧪 Running post-commit tests...")
-            
+
             for prompt_file in prompt_files:
                 prompt_id = Path(prompt_file).stem
-                # Basic validation test
-                try:
-                    manager = PromptManager(str(self.repo_path))
-                    manager.get_prompt(f"{prompt_id}:working", {})
+                if not (self.repo_path / prompt_file).exists():
+                    # Removed in this commit; nothing left to validate.
+                    continue
+                ok, detail = self._validate_prompt(prompt_file)
+                if ok:
                     self._log(f"✅ {prompt_id}: Post-commit validation passed")
-                except Exception as e:
-                    self._log(f"❌ {prompt_id}: Post-commit test failed - {e}")
-                    
+                else:
+                    self._log(f"❌ {prompt_id}: Post-commit test failed - {detail}")
+
         except Exception as e:
             self._log(f"Post-commit tests failed: {e}")
     
@@ -345,15 +380,20 @@ class PostCommitHook:
             try:
                 with open(config_file) as f:
                     return yaml.safe_load(f) or {}
-            except Exception:
-                pass
+            except Exception as e:
+                # Falling back to defaults is right; doing it silently is not.
+                # The user edited this file expecting it to take effect.
+                print(
+                    f"[promptops] Ignoring unreadable {config_file}: {e}",
+                    file=sys.stderr,
+                )
         
         # Default configuration
         return {
             "verbose": False,
             "auto_tag_versions": True,
             "post_commit_tests": True,
-            "generate_reports": True
+            "generate_reports": False
         }
     
     def _log(self, message: str):

@@ -64,14 +64,23 @@ def repo(
     # Directory + config only (D9): write a default config unless one
     # already exists — re-running init must never clobber user settings.
     if not (root / ".promptops" / "config.yaml").exists():
-        _create_initial_config(False, True, False)
+        # (run_tests, generate_reports, verbose). generate_reports was True,
+        # which wrote `generate_reports: true` into every fresh config and so
+        # overrode the hook's own default. Reports write markdown files into
+        # the user's repository after every commit; that is opt-in.
+        _create_initial_config(False, False, False)
         typer.echo("✅ Created default .promptops/config.yaml")
 
     if with_hooks:
         if interactive:
             typer.echo("\n🔧 Git Hook Configuration:")
             run_tests = typer.confirm("Run basic tests before commits?", default=False)
-            generate_reports = typer.confirm("Generate reports after commits?", default=True)
+            # Defaults to no, matching the hook: this writes markdown files
+            # into the user's repository after every commit.
+            generate_reports = typer.confirm(
+                "Write a markdown report into .promptops/reports/ after commits?",
+                default=False,
+            )
             verbose_logging = typer.confirm("Enable verbose logging?", default=False)
             # Honor the same idempotency contract as the default path:
             # never silently clobber a config the user has already edited.
