@@ -115,9 +115,14 @@ class PreCommitHook:
     def _get_staged_prompt_files(self) -> List[str]:
         """Get list of staged prompt files."""
         try:
-            # Get staged files
+            # Get staged files. "--diff-filter=d" (lowercase, meaning
+            # *exclude*) drops staged deletions: a deleted prompt has no
+            # staged content, so `git show :path` fails, the working-directory
+            # fallback finds nothing, and _process_prompt_file returns False,
+            # which blocks the commit. Removing a prompt is ordinary work and
+            # must not be blocked, and there is nothing to version anyway.
             result = subprocess.run(
-                ["git", "diff", "--cached", "--name-only"],
+                ["git", "diff", "--cached", "--name-only", "--diff-filter=d"],
                 cwd=self.repo_path,
                 capture_output=True,
                 text=True,
@@ -202,7 +207,12 @@ class PreCommitHook:
         """Get file content from HEAD commit."""
         try:
             result = subprocess.run(
-                ["git", "show", "--", f"HEAD:{file_path}"],
+                # No "--" separator here. It marks everything after it as a
+                # PATHSPEC, so "HEAD:path" stops being parsed as a revision
+                # and git exits 0 with empty output. The revision itself is
+                # not attacker-controlled: file_path comes from
+                # `git diff --cached --name-only`, i.e. from git.
+                ["git", "show", f"HEAD:{file_path}"],
                 cwd=self.repo_path,
                 capture_output=True,
                 text=True,
@@ -217,7 +227,9 @@ class PreCommitHook:
         """Get file content from git index (staged)."""
         try:
             result = subprocess.run(
-                ["git", "show", "--", f":{file_path}"],
+                # See the note above: ":path" is a revision (the index), not
+                # a pathspec, so it must not sit behind a "--".
+                ["git", "show", f":{file_path}"],
                 cwd=self.repo_path,
                 capture_output=True,
                 text=True,
@@ -235,7 +247,14 @@ class PreCommitHook:
         """Extract current version from YAML content."""
         try:
             data = yaml.safe_load(content)
-            
+
+            # yaml.safe_load returns None for empty or comment-only input, and
+            # a scalar for a bare value. "metadata" in None raises TypeError,
+            # which `except yaml.YAMLError` below does not catch, so it
+            # escaped to the caller and blocked the commit.
+            if not isinstance(data, dict):
+                return "v1.0.0"
+
             # Try new format first
             if "metadata" in data and "version" in data["metadata"]:
                 return data["metadata"]["version"]

@@ -84,9 +84,16 @@ class PostCommitHook:
     def _get_changed_prompt_files(self) -> List[str]:
         """Get list of prompt files changed in the current commit."""
         try:
-            # Get files changed in HEAD commit
+            # Get files changed in HEAD commit.
+            #
+            # "--root" is what makes this work on the *first* commit in a
+            # repository. A root commit has no parent, so without it git
+            # prints nothing and exits 0, and that silence read as "no prompt
+            # files changed" and skipped versioning altogether. The first
+            # commit of a new repo is exactly the path a first-time user
+            # takes. On any other commit the flag is a no-op.
             result = subprocess.run(
-                ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"],
+                ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", "--root", "HEAD"],
                 cwd=self.repo_path,
                 capture_output=True,
                 text=True,
@@ -251,7 +258,13 @@ class PostCommitHook:
                 return None
                 
             data = yaml.safe_load(full_path.read_text())
-            
+
+            # None for an empty or comment-only file; "metadata" in None
+            # raises TypeError, which the bare except below would turn into a
+            # silent None rather than surfacing the real problem.
+            if not isinstance(data, dict):
+                return None
+
             # Try new format first
             if "metadata" in data and "version" in data["metadata"]:
                 return data["metadata"]["version"]
@@ -268,9 +281,19 @@ class PostCommitHook:
     def _detect_change_type(self, prompt_file: str) -> str:
         """Detect the type of change made to the prompt."""
         try:
+            # A prompt removed in this commit has no file left to read. Say so
+            # rather than letting the read below raise FileNotFoundError into
+            # the handler at the bottom, which reported "UNKNOWN" and lost the
+            # one fact worth reporting.
+            if not (self.repo_path / prompt_file).exists():
+                return "DELETED"
+
             # Get previous version of file
             prev_content = subprocess.run(
-                ["git", "show", "--", f"HEAD~1:{prompt_file}"],
+                # No "--": "HEAD~1:path" is a revision, and behind a "--" git
+                # reads it as a pathspec and exits 0 with empty output. That
+                # silence is why this returned "UNKNOWN" for every change.
+                ["git", "show", f"HEAD~1:{prompt_file}"],
                 capture_output=True,
                 text=True,
                 cwd=self.repo_path
@@ -285,7 +308,16 @@ class PostCommitHook:
             try:
                 prev_data = yaml.safe_load(prev_content.stdout)
                 curr_data = yaml.safe_load(current_content)
-                
+
+                # An unparseable or empty previous revision means there is
+                # nothing to compare against, which is what "NEW" means.
+                # Calling .get() on None here raised AttributeError and the
+                # outer handler reported "UNKNOWN" instead.
+                if not isinstance(prev_data, dict):
+                    return "NEW"
+                if not isinstance(curr_data, dict):
+                    return "PATCH"
+
                 # Check for variable changes
                 prev_vars = prev_data.get('variables', {})
                 curr_vars = curr_data.get('variables', {})
