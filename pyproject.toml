@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "llmhq-promptops"
-version = "0.5.0"
+version = "0.6.0"
 description = "Git blame for prompts: incident archaeology, git-native prompt versioning, and a no-SaaS production runtime for LLM workflows"
 readme = "README.md"
 requires-python = ">=3.10"

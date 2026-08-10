@@ -169,6 +169,7 @@ Full help: `promptops --help` or `promptops <command> --help`.
 | [Production Deployment](https://github.com/llmhq-hub/promptops/blob/main/docs/production-deployment.md) | You are wiring the snapshot pipeline, Docker, and CI |
 | [Migrating from Hardcoded Prompts](https://github.com/llmhq-hub/promptops/blob/main/docs/migration-from-hardcoded-prompts.md) | You have prompts in string literals today |
 | [Error Codes](https://github.com/llmhq-hub/promptops/blob/main/docs/error-codes.md) | You hit a `PROMPTOPS_E0XX` and want the fix |
+| [Migration v0.5 to v0.6](https://github.com/llmhq-hub/promptops/blob/main/docs/migration-v0.5-to-v0.6.md) | You are upgrading to v0.6.0 (the git hooks were broken from v0.2.0 to v0.5.0) |
 | [Migration v0.4 to v0.5](https://github.com/llmhq-hub/promptops/blob/main/docs/migration-v0.4-to-v0.5.md) | You are upgrading to v0.5.0 (one break fails silently) |
 | [Migration v0.3 to v0.4](https://github.com/llmhq-hub/promptops/blob/main/docs/migration-v0.3-to-v0.4.md) | You are upgrading across the breaking release |
 
@@ -241,19 +242,36 @@ variables:
 
 Automated versioning is **opt-in** — enable it once per repo with
 `promptops hooks install`. (Since v0.4.0, `promptops init repo` never
-modifies `.git/hooks/` on its own.) After that, semantic version rules
-applied by the pre-commit hook:
+modifies `.git/hooks/` on its own.)
 
-- **PATCH** (1.0.0 → 1.0.1) — template content changes only
-- **MINOR** (1.0.0 → 1.1.0) — new variables added (backwards compatible)
-- **MAJOR** (1.0.0 → 2.0.0) — required variables removed (breaking change)
+The pre-commit hook grades a change from its **variable signature** and declared
+models, never from prose. It uses the same engine as `promptops test diff`, so
+a change graded MAJOR in review is versioned MAJOR on commit:
+
+| Change | Impact |
+|---|---|
+| Required variable added, removed, renamed, or retyped | **MAJOR** (1.2.0 → 2.0.0) |
+| Optional variable promoted to required | **MAJOR** |
+| Declared model removed | **MAJOR** |
+| Optional variable added or removed | **MINOR** (1.2.0 → 1.3.0) |
+| Required variable relaxed to optional | **MINOR** |
+| Model added, or an optional variable's default changed | **MINOR** |
+| Prose changed, signature identical | **PATCH** (1.2.0 → 1.2.1) |
+| Nothing a caller depends on moved | **no bump** |
+
+A brand-new prompt keeps the version you declared: there is nothing for a first
+commit to be backward incompatible with.
 
 **Workflow** (after `promptops hooks install`):
 
 1. Edit a prompt → changes in working tree
-2. `promptops test runtest --prompt name:unstaged` (test before commit)
-3. `git add` + `git commit` → pre-commit hook bumps version and re-stages
-4. Post-commit hook tags the new version and generates a changelog entry
+2. `promptops test diff name` (see the impact before you commit)
+3. `git add` + `git commit` → pre-commit hook bumps the version line and re-stages
+4. Post-commit hook tags it `prompt-<id>-v<version>` and validates it
+
+The bump rewrites the version line and nothing else, so comments and
+`template: |` formatting survive. `promptops doctor` verifies the hooks can
+actually run, not merely that they are installed.
 
 Zero manual version management.
 

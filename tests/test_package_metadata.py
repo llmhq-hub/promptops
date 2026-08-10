@@ -141,3 +141,34 @@ def test_public_api_surface_is_exported():
         assert hasattr(llmhq_promptops, name), (
             f"__all__ advertises {name!r} but the attribute is not present"
         )
+
+
+def test_the_cli_can_report_its_own_version():
+    """A user upgrading has to be able to confirm what they are running.
+
+    There was no way to ask: no `promptops version` command and no
+    `--version` flag, so "did the upgrade take" could only be answered from
+    outside the tool. That is a poor answer for a tool whose whole job is
+    telling you which version of something is in effect.
+    """
+    from typer.testing import CliRunner
+
+    import llmhq_promptops
+    from cli.main import app
+
+    result = CliRunner().invoke(app, ["--version"])
+
+    assert result.exit_code == 0, result.output
+    assert llmhq_promptops.__version__ in result.output
+
+
+def test_the_short_version_flag_works_too():
+    from typer.testing import CliRunner
+
+    import llmhq_promptops
+    from cli.main import app
+
+    result = CliRunner().invoke(app, ["-V"])
+
+    assert result.exit_code == 0, result.output
+    assert llmhq_promptops.__version__ in result.output

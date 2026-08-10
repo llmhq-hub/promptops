@@ -5,6 +5,180 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-08-02
+
+A repair release. The git hooks, the feature this project leads with, have not
+worked since **v0.2.0**: installing them and editing a prompt blocked the commit
+outright, and every release from 0.2.0 through 0.5.0 shipped that way. Eleven
+defects in total, five of which were only visible once the blocked commit was
+unblocked.
+
+Five breaking changes, each tagged **[BREAKING]** below, with the reasoning
+alongside. See [`docs/migration-v0.5-to-v0.6.md`](docs/migration-v0.5-to-v0.6.md).
+If you never ran `promptops hooks install`, only the `generate_reports` default
+affects you.
+
+**Do not downgrade to work around anything here.** There is no good release to
+fall back to: v0.4.0 and every release back to v0.2.0 carry the same hook bug.
+
+### Fixed
+
+- **The pre-commit hook blocked every commit that touched a prompt.** Three
+  calls used `git show -- <rev>:<path>`. The `--` separator marks everything
+  after it as a **pathspec**, so `<rev>:<path>` stopped being parsed as a
+  revision and git exited 0 with empty output rather than failing. That empty
+  string is not `None`, so it passed the guard, then `yaml.safe_load("")`
+  returned `None` and `"metadata" in None` raised `TypeError`, which the hook
+  caught and converted into a blocked commit. The same silence made
+  `_get_committed_content` return `""` (so every existing prompt looked brand
+  new to the version detector) and `_detect_change_type` report `UNKNOWN` for
+  every change. `--` remains correct where git expects a pathspec: the
+  `git tag -l --`, `git tag -m --` and `git add --` calls added in the same
+  v0.2.0 security pass are all fine.
+- Three unguarded `yaml.safe_load` results. It returns `None` for empty or
+  comment-only input, and `except yaml.YAMLError` does not catch the resulting
+  `TypeError`.
+- **Deleting a prompt blocked the commit.** A staged deletion has no staged
+  content, so `git show :path` failed, the working-directory fallback found
+  nothing, and the hook reported "Could not read staged content" and refused.
+  Staged deletions are now excluded with `--diff-filter=d`; there is nothing to
+  version in a deletion anyway. A removed prompt is reported as `DELETED` rather
+  than lost in a catch-all handler.
+- **A repository's first commit got no versioning at all.** `git diff-tree HEAD`
+  has no parent to diff against on a root commit, so it printed nothing and
+  exited 0, and that silence read as "no prompt files changed". `--root` fixes
+  it and is a no-op on every other commit. This is the exact path a first-time
+  user takes: `git init`, `promptops init repo`, `promptops hooks install`,
+  write a prompt, commit.
+- **The version bump silently deleted every comment in a prompt.**
+  `_update_version_in_yaml` round-tripped the whole document through
+  `yaml.safe_load` and `yaml.dump` in order to change one field. YAML comments
+  do not survive that, and neither does block scalar formatting: `template: |`
+  came back as a quoted folded scalar. Every commit, every prompt, no warning.
+  The rewrite is now a targeted line edit that changes the version line and
+  nothing else, preserving any end-of-line comment on that line and the file's
+  trailing newline. When the file's shape makes a line edit impossible (a flow
+  mapping, say) it refuses and leaves the file untouched, rather than falling
+  back to a reserialization. The result is verified by reading the version back
+  with the same function the rest of the hook uses.
+- **The post-commit hook staged files behind your back.** It wrote into
+  `.promptops/reports/` after the commit and ran `git add` on the result, so
+  your next commit silently carried files you never staged. The `git add` is
+  gone in every configuration.
+- **The post-commit check failed on every prompt with a required variable.** It
+  rendered with `{}`, so any such prompt failed by construction with
+  `PROMPTOPS_E014: Required variable 'name' not provided`. Since
+  `post_commit_tests` defaults to on, every user saw a red mark on every commit.
+  A check that cannot pass teaches people to ignore everything the tool prints.
+  Replaced by `core/template.py::validate_prompt_text`, shared by both hooks,
+  which tests the three things that can genuinely be wrong: the YAML parses into
+  a prompt, the Jinja source compiles, and the template renders given values for
+  the variables it declares. `pre_commit._run_prompt_tests` had the same
+  `render({})` bug and now shares the same validator.
+- **`promptops doctor` could not tell a live hook from a dead one.** It reported
+  "PromptOps hooks installed" for six releases while they were broken, because
+  it checked the files existed and never that they could run. The hook scripts
+  start with `#!/usr/bin/env python3`, so a hook installed inside a venv and run
+  from a shell where that venv is not active fails on every commit while doctor
+  calls it healthy. The check now runs the shebang interpreter against
+  `import llmhq_promptops` and reports FAIL when that cannot work. Missing hooks
+  remain a WARN, since they have been opt-in since v0.4.0.
+- **`promptops doctor` failed a repo whose last prompt was deleted.** `git rm`
+  of the final prompt removes `.promptops/prompts/`, since git does not track
+  empty directories, and the structure check called that broken and exited 1.
+  It conflated "PromptOps was never set up here" with "set up, and currently
+  has no prompts". In a git repository this is now a WARN; without `.git/` it
+  stays a FAIL, because there is genuinely nothing left to resolve from. This
+  state was unreachable before 0.6.0, since the hook blocked deletions.
+- The four fully silent `except Exception` handlers in the hooks now log.
+  Falling back to a default is usually right; doing it without saying so is how
+  six releases of breakage stayed invisible.
+
+### Changed
+
+- **The pre-commit hook grades changes with `core/impact.py`. [BREAKING]** Two
+  independent implementations of "what does this change break" existed:
+  `core/version_detector.py`, written for v0.1.0 and referenced by zero test
+  files, and `core/impact.py`, written for v0.5.0 with 22 tests. They disagreed
+  on 2 of 7 change types, both times with the older one under-grading a breaking
+  change: adding a **required** variable was MINOR where `test diff` says MAJOR,
+  and changing a variable's **type** was PATCH where `test diff` says MAJOR. A
+  repository running the hooks alongside the `test diff --exit-code` CI gate
+  therefore got its pull request blocked as breaking while the hook stamped a
+  non-breaking version onto the same commit. Both cases are now MAJOR. Adding a
+  required variable makes every existing call fail validation; changing a type
+  silently changes what a passing call means. Grading either below MAJOR tells a
+  reviewer a breaking change is safe, which is worse than not grading at all.
+  New `next_version(current, old_text, new_text)` in `core/impact.py` is the
+  single entry point.
+- **A change touching only metadata no longer bumps the version. [BREAKING]** It
+  was PATCH. A typo fix in a description is not a contract change, and minting a
+  version for it produces churn that teaches people to ignore version numbers.
+- **A new prompt's first commit keeps its declared version. [BREAKING]**
+  Declaring `version: v1.0.0` and committing produced `v1.1.0`, because the old
+  grader compared the new prompt against an empty document, read every variable
+  as an addition, and graded MINOR. There is nothing for a first commit to be
+  backward incompatible with, and a tool whose first act is to overwrite the
+  version the author just wrote is not trustworthy on any later version either.
+- **The post-commit hook tags `prompt-<id>-v<version>`. [BREAKING]** It wrote
+  `<prompt-id>-v1.2.3`. The SDK reads exactly two formats,
+  `prompt-<id>-v1.2.3` (what `promptops migrate tag-history` writes) and legacy
+  global `v1.2.3`, so `history`, `blame` and version resolution ignored every
+  tag auto-versioning ever created and fell back to `commit-<sha>`. The headline
+  feature worked and no other part of the product could tell. Existing
+  `<id>-v1.2.3` tags are untouched and were already invisible;
+  `promptops migrate tag-history` writes the readable format across history.
+- **`generate_reports` defaults to False. [BREAKING]** In the hook and in the
+  config `promptops init repo` writes, which was hardcoding `true` and so
+  overriding the hook's own default. Writing markdown files into someone's
+  repository after every commit is opt-in. Set `generate_reports: true` to keep
+  them; they are written and left untracked.
+- `pre_commit._validate_prompt_syntax` compiles the Jinja source. It claimed to
+  validate syntax but only constructed a `PromptTemplate`, and
+  `PromptTemplate.template` is a lazy property, so an unclosed `{% if %}` sailed
+  through to production and failed at render time. Commits that previously
+  succeeded can now fail, following the precedent E012 set in v0.5.0: a build
+  failure beats a production failure.
+- `post_commit._detect_change_type` grades with `core/impact.py` rather than its
+  own rules (more variables meant MINOR, fewer meant MAJOR), which made it a
+  third answer to the same question.
+
+### Deprecated
+
+- `SemanticVersionDetector` emits a `DeprecationWarning` and is removed in
+  0.7.0. Its grading delegates to `core.impact`, so it cannot drift back out of
+  agreement while it lives. `VersionChange.file_changes` now carries
+  `ImpactReport.to_dict()` rather than the old `metadata_changes` /
+  `template_changes` / `variable_changes` / `model_changes` /
+  `breaking_changes` / `new_features` keys, which described internals that no
+  longer exist. `ChangeType` gains a `NONE` member.
+
+### Added
+
+- **`promptops --version` (and `-V`).** There was no way to ask the CLI what
+  version it was: no `version` command and no flag, so a user upgrading could
+  only answer "did that take" from outside the tool. Found while executing the
+  migration guide's own verification block rather than by reading it.
+- New public helpers: `next_version()` and `bump()` in `core/impact.py`,
+  `validate_prompt_text()` and `sample_variables()` in `core/template.py`.
+- [`docs/migration-v0.5-to-v0.6.md`](docs/migration-v0.5-to-v0.6.md).
+- **93 new tests, across five files, none of which existed before.** No test
+  imported `llmhq_promptops.hooks` at all: 1096 lines of hook code with 15
+  `except Exception` handlers ran uncovered through six releases, which is why
+  this survived. `tests/test_hooks_e2e.py`, `test_hooks_repo_safety.py`,
+  `test_hooks_usable_output.py` and `test_hooks_internals.py` cover the hooks;
+  `test_versioning_policy.py` asserts as a *property* that the hook path and the
+  `test diff` path return the same grade for the same change, which is what
+  makes that class of divergence impossible to reintroduce rather than merely
+  fixed twice. The end-to-end tests drive real `git commit` calls, because every
+  unit-level test passed throughout all six broken releases, and they pin the
+  interpreter on `PATH` or the hook imports a different install and proves
+  nothing. 442 to 535 tests. Hook coverage moved from 39% and 45% to 80% and
+  81%; `core/impact.py` is at 91%.
+- `examples/hooks-lifecycle/run.sh` now shows the hook's real output instead of
+  truncating it, demonstrates a MAJOR bump, and prints `promptops test diff` and
+  the hook side by side to show they agree.
+
 ## [0.5.0] - 2026-07-31
 
 The retention-wedge batch: the daily-use loop (`history`, `doctor`, a real
