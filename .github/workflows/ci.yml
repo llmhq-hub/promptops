@@ -42,21 +42,33 @@ jobs:
           python -m pip install --upgrade pip
           python scripts/floor_constraints.py > floors.txt
           echo "::group::floors"; cat floors.txt; echo "::endgroup::"
-          python -m pip install -c floors.txt -e . pytest pip-audit
+          python -m pip install -c floors.txt -e .
 
       - name: Install at the latest versions
         if: matrix.deps == 'latest'
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e . pytest pip-audit
+          python -m pip install -e .
 
-      - name: Show what actually resolved
-        run: python -m pip list
+      - name: Record the package's resolved dependency closure
+        # Taken before the test tooling goes in, so this is exactly what a
+        # user who installs llmhq-promptops gets, and nothing more.
+        run: |
+          python -m pip freeze --exclude-editable > resolved-deps.txt
+          echo "::group::resolved dependency closure"; cat resolved-deps.txt; echo "::endgroup::"
+
+      - name: Install test tooling
+        run: |
+          python -m pip install pytest pip-audit
+          python -m pip list
 
       - name: Test
         run: python -m pytest tests/ -q
 
-      - name: Audit the resolved dependencies
-        # The editable package itself is not on PyPI at this version, so it is
-        # skipped; everything it pulled in is audited.
-        run: pip-audit --skip-editable
+      - name: Audit the package's dependency closure
+        # Scoped to resolved-deps.txt on purpose. Auditing the whole
+        # environment also audits pytest, pip-audit and whatever the runner
+        # image preinstalled (setuptools 79 on the 3.10 image carried
+        # PYSEC-2026-3447), none of which ships to users. --no-deps because
+        # the file is already a fully pinned resolution.
+        run: pip-audit -r resolved-deps.txt --no-deps
