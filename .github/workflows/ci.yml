@@ -1,0 +1,62 @@
+# Runs the suite at the declared minimum dependency versions AND at the
+# latest, on the oldest and newest supported Python, then audits the resolved
+# set for known vulnerabilities.
+#
+# The floors leg exists because nothing ever installed them before 0.6.1 and
+# the declared combination turned out to be broken while the suite stayed
+# green at latest. scripts/floor_constraints.py derives the floor set from
+# pyproject.toml so there is one source of truth.
+#
+# Actions are pinned by commit SHA (Dependabot keeps the version comments
+# current), so a moved tag cannot change what runs here.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (py${{ matrix.python }}, deps=${{ matrix.deps }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.13"]
+        deps: [floors, latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install at the declared minimum versions
+        if: matrix.deps == 'floors'
+        run: |
+          python -m pip install --upgrade pip
+          python scripts/floor_constraints.py > floors.txt
+          echo "::group::floors"; cat floors.txt; echo "::endgroup::"
+          python -m pip install -c floors.txt -e . pytest pip-audit
+
+      - name: Install at the latest versions
+        if: matrix.deps == 'latest'
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e . pytest pip-audit
+
+      - name: Show what actually resolved
+        run: python -m pip list
+
+      - name: Test
+        run: python -m pytest tests/ -q
+
+      - name: Audit the resolved dependencies
+        # The editable package itself is not on PyPI at this version, so it is
+        # skipped; everything it pulled in is audited.
+        run: pip-audit --skip-editable

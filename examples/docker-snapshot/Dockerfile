@@ -31,4 +31,11 @@ COPY app.py /app/app.py
 RUN test ! -d /app/.git || (echo "FAIL: .git leaked into the image" && exit 1)
 RUN ! command -v git || (echo "FAIL: git binary present; this example proves nothing" && exit 1)
 
+# Run as an unprivileged user. Nothing here needs root: the snapshot is read,
+# never written, and the app binds no ports. A container that runs as root
+# hands any bug in the app the whole container.
+RUN useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin promptops \
+    && chown -R promptops:promptops /app
+USER promptops
+
 CMD ["python", "/app/app.py"]
