@@ -153,6 +153,24 @@ def _check_hooks(repo: Path) -> Check:
             ),
         )
 
+    stale = _searches_the_repository(hooks_dir, installed)
+    if stale:
+        return Check(
+            name="hooks",
+            status=CheckStatus.FAIL,
+            message=(
+                f"PromptOps hook(s) {', '.join(sorted(stale))} were installed by "
+                f"a release before 0.6.1 and load code from the repository's "
+                f"src/ directory whenever their interpreter cannot import "
+                f"PromptOps."
+            ),
+            hint=(
+                "Re-run 'promptops hooks install' from the environment you "
+                "commit from. The current hook is bound to that interpreter "
+                "and never imports from the working tree."
+            ),
+        )
+
     dead = _dead_hook_interpreter(hooks_dir, installed)
     if dead is not None:
         interpreter, detail = dead
@@ -176,6 +194,27 @@ def _check_hooks(repo: Path) -> Check:
         status=CheckStatus.OK,
         message=f"PromptOps hooks installed: {', '.join(sorted(installed))}.",
     )
+
+
+def _searches_the_repository(hooks_dir: Path, installed: List[str]) -> List[str]:
+    """Which installed hooks still carry the pre-0.6.1 fallback search.
+
+    Those scripts pushed ``<repo>/src`` onto ``sys.path`` and imported
+    whatever ``llmhq_promptops`` they found there whenever their interpreter
+    could not import the real one: code execution from working-tree content
+    on every commit (CWE-427). A hook like that still runs, so an
+    existence-and-interpreter check calls it healthy. It is broken, not a
+    choice, so it is a FAIL rather than a WARN.
+    """
+    stale: List[str] = []
+    for name in installed:
+        try:
+            content = (hooks_dir / name).read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        if "sys.path.insert" in content:
+            stale.append(name)
+    return stale
 
 
 def _dead_hook_interpreter(

@@ -2,6 +2,7 @@
 import typer
 import subprocess
 import os
+import sys
 import stat
 from pathlib import Path
 
@@ -178,209 +179,153 @@ versioning:
         raise typer.Exit(1)
 
 
-def _install_pre_commit_hook(hooks_dir: Path):
-    """Install the pre-commit hook with improved error handling."""
-    hook_file = hooks_dir / "pre-commit"
-    
-    # Check if hook already exists
-    try:
-        if hook_file.exists() and not _is_promptops_hook(hook_file):
-            backup_file = hooks_dir / "pre-commit.backup"
-            hook_file.rename(backup_file)
-            typer.echo(f"📦 Backed up existing pre-commit hook to {backup_file}")
-    except FileNotFoundError:
-        pass  # File was removed between check and rename
-    
-    # Create hook script with robust error handling
-    hook_content = f"""#!/usr/bin/env python3
-# PromptOps pre-commit hook
+def _hook_interpreter() -> str:
+    """The interpreter written into the hook's shebang: this one.
+
+    Whoever runs ``hooks install`` is, by construction, running a Python that
+    can import PromptOps, so the hook is bound to it. Through v0.6.0 the
+    shebang was ``#!/usr/bin/env python3``, which resolved to whatever PATH
+    held at commit time; when that was a different interpreter the hook went
+    searching the repository for a ``src/llmhq_promptops`` to import instead
+    (CWE-427). Binding removes both the search and the mismatch.
+
+    ``sys.executable`` is deliberately not resolved through symlinks: inside
+    a venv it is the venv's own ``bin/python``, and following it would land
+    on the base interpreter and lose the venv's site-packages.
+
+    A path containing whitespace cannot be a shebang (the kernel splits on
+    it), so that case, and an empty ``sys.executable`` (embedded
+    interpreters), fall back to PATH resolution with a warning.
+    """
+    exe = sys.executable
+    if exe and os.path.isabs(exe) and not any(ch.isspace() for ch in exe):
+        return exe
+    typer.echo(
+        "⚠️  Cannot bind the hooks to this interpreter "
+        f"({exe or 'unknown path'}); they will resolve 'python3' from PATH at "
+        "commit time. Make sure that Python can import llmhq_promptops.",
+        err=True,
+    )
+    return "/usr/bin/env python3"
+
+
+_HOOK_HEADER = '''\
+#!__INTERPRETER__
+# PromptOps __NAME__ hook
+#
+# Installed by `promptops hooks install` and bound to the interpreter on the
+# first line: PromptOps is imported from there and from nowhere else. Releases
+# before 0.6.1 resolved python3 from PATH and, when it could not import
+# PromptOps, searched the repository being committed to for a
+# src/llmhq_promptops package and imported whatever they found. Repository
+# content is not a trusted place to load code from on every commit.
+#
+# If this interpreter goes away (a rebuilt venv, say), re-run
+# `promptops hooks install` from the environment you commit from.
+# `promptops doctor` reports a hook whose interpreter cannot import PromptOps.
 import sys
-import os
-from pathlib import Path
+'''
+
+_PRE_COMMIT_BODY = '''
 
 def find_promptops():
-    '''Find promptops installation with clear error messages.'''
-    
-    # Method 1: Try pip installed package
+    """Import PromptOps from this interpreter, or say exactly why that failed."""
     try:
         import llmhq_promptops
-        return llmhq_promptops.__file__
-    except ImportError:
-        pass
-    
-    # Method 2: Try development installation
-    repo_root = Path(__file__).parent.parent.parent
-    dev_path = repo_root / "src" / "llmhq_promptops"
-    
-    if dev_path.exists() and (dev_path / "__init__.py").exists():
-        sys.path.insert(0, str(repo_root / "src"))
-        try:
-            import llmhq_promptops
-            return str(dev_path)
-        except ImportError:
-            pass
-    
-    # Method 3: Try relative to hook location
-    hook_dir = Path(__file__).parent
-    relative_paths = [
-        hook_dir.parent.parent / "src" / "llmhq_promptops",
-        hook_dir.parent.parent.parent / "src" / "llmhq_promptops"
-    ]
-    
-    for path in relative_paths:
-        if path.exists() and (path / "__init__.py").exists():
-            sys.path.insert(0, str(path.parent))
-            try:
-                import llmhq_promptops
-                return str(path)
-            except ImportError:
-                continue
-    
-    # Method 4: Try current working directory
-    cwd_path = Path.cwd() / "src" / "llmhq_promptops"
-    if cwd_path.exists():
-        sys.path.insert(0, str(cwd_path.parent))
-        try:
-            import llmhq_promptops
-            return str(cwd_path)
-        except ImportError:
-            pass
-    
-    # Clear error message with recovery steps
-    print("❌ PromptOps installation not found!", file=sys.stderr)
-    print("", file=sys.stderr)
-    print("Searched locations:", file=sys.stderr)
-    print("  • Python packages (pip install)", file=sys.stderr)
-    print(f"  • Development: {{repo_root}}/src/", file=sys.stderr)
-    print(f"  • Relative to hook: {{hook_dir}}/../src/", file=sys.stderr)
-    print(f"  • Current directory: {{cwd}}/src/", file=sys.stderr)
-    print("", file=sys.stderr)
-    print("To fix this issue:", file=sys.stderr)
-    print("1. Install promptops: pip install llmhq-promptops", file=sys.stderr)
-    print("2. Or reinstall hooks: promptops hooks install", file=sys.stderr)
-    print("3. Or run from project root directory", file=sys.stderr)
-    sys.exit(1)
+    except ImportError as exc:
+        print("❌ PromptOps installation not found!", file=sys.stderr)
+        print(f"   interpreter: {sys.executable}", file=sys.stderr)
+        print(f"   reason:      {exc}", file=sys.stderr)
+        print("", file=sys.stderr)
+        print("To fix this issue:", file=sys.stderr)
+        print("  1. Install PromptOps into that interpreter: pip install llmhq-promptops", file=sys.stderr)
+        print("  2. Or reinstall the hooks from the environment you commit from: promptops hooks install", file=sys.stderr)
+        print("  3. Or remove the hooks: promptops hooks uninstall", file=sys.stderr)
+        sys.exit(1)
+    return llmhq_promptops.__file__
 
-# Find and import promptops
-promotops_path = find_promptops()
-print(f"[promptops] Using installation at: {{promotops_path}}", file=sys.stderr)
+
+promptops_path = find_promptops()
+print(f"[promptops] Using installation at: {promptops_path}", file=sys.stderr)
 
 try:
     from llmhq_promptops.hooks.pre_commit import main
     main()
 except Exception as e:
-    print(f"❌ PromptOps pre-commit hook failed: {{e}}", file=sys.stderr)
+    print(f"❌ PromptOps pre-commit hook failed: {e}", file=sys.stderr)
     print("Run 'promptops hooks status' to verify installation", file=sys.stderr)
     sys.exit(1)
-"""
-    
-    hook_file.write_text(hook_content)
-    
-    # Make executable
-    current_mode = hook_file.stat().st_mode
-    hook_file.chmod(current_mode | stat.S_IEXEC)
-    
-    # Test the hook installation
-    if not _test_hook_installation(hook_file):
-        typer.echo("⚠️  Hook installed but failed validation test", err=True)
+'''
 
-
-def _install_post_commit_hook(hooks_dir: Path):
-    """Install the post-commit hook with improved error handling."""
-    hook_file = hooks_dir / "post-commit"
-    
-    # Check if hook already exists
-    try:
-        if hook_file.exists() and not _is_promptops_hook(hook_file):
-            backup_file = hooks_dir / "post-commit.backup"
-            hook_file.rename(backup_file)
-            typer.echo(f"📦 Backed up existing post-commit hook to {backup_file}")
-    except FileNotFoundError:
-        pass  # File was removed between check and rename
-    
-    # Create hook script with same robust error handling as pre-commit
-    hook_content = f"""#!/usr/bin/env python3
-# PromptOps post-commit hook
-import sys
-import os
-from pathlib import Path
+_POST_COMMIT_BODY = '''
 
 def find_promptops():
-    '''Find promptops installation with clear error messages.'''
-    
-    # Method 1: Try pip installed package
+    """Import PromptOps from this interpreter; None, with a warning, if it cannot."""
     try:
         import llmhq_promptops
-        return llmhq_promptops.__file__
-    except ImportError:
-        pass
-    
-    # Method 2: Try development installation
-    repo_root = Path(__file__).parent.parent.parent
-    dev_path = repo_root / "src" / "llmhq_promptops"
-    
-    if dev_path.exists() and (dev_path / "__init__.py").exists():
-        sys.path.insert(0, str(repo_root / "src"))
-        try:
-            import llmhq_promptops
-            return str(dev_path)
-        except ImportError:
-            pass
-    
-    # Method 3: Try relative to hook location
-    hook_dir = Path(__file__).parent
-    relative_paths = [
-        hook_dir.parent.parent / "src" / "llmhq_promptops",
-        hook_dir.parent.parent.parent / "src" / "llmhq_promptops"
-    ]
-    
-    for path in relative_paths:
-        if path.exists() and (path / "__init__.py").exists():
-            sys.path.insert(0, str(path.parent))
-            try:
-                import llmhq_promptops
-                return str(path)
-            except ImportError:
-                continue
-    
-    # Method 4: Try current working directory
-    cwd_path = Path.cwd() / "src" / "llmhq_promptops"
-    if cwd_path.exists():
-        sys.path.insert(0, str(cwd_path.parent))
-        try:
-            import llmhq_promptops
-            return str(cwd_path)
-        except ImportError:
-            pass
-    
-    # Post-commit hooks are less critical, so just warn instead of failing
-    print("⚠️  PromptOps installation not found for post-commit hook", file=sys.stderr)
-    print("Post-commit features (tagging, reports) will be skipped", file=sys.stderr)
-    return None
+    except ImportError as exc:
+        # The commit has already happened. Tagging and reports are
+        # best-effort, so a missing install is reported, not fatal.
+        print("⚠️  PromptOps installation not found for post-commit hook", file=sys.stderr)
+        print(f"   interpreter: {sys.executable}", file=sys.stderr)
+        print(f"   reason:      {exc}", file=sys.stderr)
+        print("Post-commit features (tagging, reports) will be skipped.", file=sys.stderr)
+        print("Reinstall from the environment you commit from: promptops hooks install", file=sys.stderr)
+        return None
+    return llmhq_promptops.__file__
 
-# Find and import promptops
-promotops_path = find_promptops()
-if promotops_path:
-    print(f"[promptops] Using installation at: {{promotops_path}}", file=sys.stderr)
+
+promptops_path = find_promptops()
+if promptops_path:
+    print(f"[promptops] Using installation at: {promptops_path}", file=sys.stderr)
     try:
         from llmhq_promptops.hooks.post_commit import main
         main()
     except Exception as e:
-        print(f"⚠️  PromptOps post-commit hook failed: {{e}}", file=sys.stderr)
+        print(f"⚠️  PromptOps post-commit hook failed: {e}", file=sys.stderr)
         print("Continuing without post-commit processing", file=sys.stderr)
 else:
     print("[promptops] Skipping post-commit hook - PromptOps not found", file=sys.stderr)
-"""
-    
-    hook_file.write_text(hook_content)
-    
+'''
+
+
+def _render_hook(name: str, body: str) -> str:
+    header = (
+        _HOOK_HEADER
+        .replace("__INTERPRETER__", _hook_interpreter())
+        .replace("__NAME__", name)
+    )
+    return header + body
+
+
+def _write_hook(hook_file: Path, content: str) -> None:
+    """Back up a foreign hook, write ours, make it executable, sanity-check it."""
+    try:
+        if hook_file.exists() and not _is_promptops_hook(hook_file):
+            backup_file = hook_file.with_name(hook_file.name + ".backup")
+            hook_file.rename(backup_file)
+            typer.echo(f"📦 Backed up existing {hook_file.name} hook to {backup_file}")
+    except FileNotFoundError:
+        pass  # File was removed between check and rename
+
+    hook_file.write_text(content)
+
     # Make executable
     current_mode = hook_file.stat().st_mode
     hook_file.chmod(current_mode | stat.S_IEXEC)
-    
-    # Test the hook installation
+
     if not _test_hook_installation(hook_file):
         typer.echo("⚠️  Hook installed but failed validation test", err=True)
+
+
+def _install_pre_commit_hook(hooks_dir: Path):
+    """Install the pre-commit hook, bound to the current interpreter."""
+    _write_hook(hooks_dir / "pre-commit", _render_hook("pre-commit", _PRE_COMMIT_BODY))
+
+
+def _install_post_commit_hook(hooks_dir: Path):
+    """Install the post-commit hook, bound to the current interpreter."""
+    _write_hook(hooks_dir / "post-commit", _render_hook("post-commit", _POST_COMMIT_BODY))
 
 
 def _is_promptops_hook(hook_file: Path) -> bool:

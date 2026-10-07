@@ -226,10 +226,9 @@ def _install_hooks(repo: Path) -> None:
 def _commit(repo: Path, message: str) -> subprocess.CompletedProcess:
     """Commit for real, with the installed hooks running.
 
-    The hook scripts start with ``#!/usr/bin/env python3``, so PATH decides
-    which interpreter runs them. Put this interpreter's directory first, or
-    the hook imports a different install (or none) and the test proves
-    nothing about the code under test.
+    Since 0.6.1 the hook's shebang is the interpreter that installed it,
+    which here is this one, so PATH no longer decides which Python runs the
+    hook. The pin stays as belt and braces for anything the hook spawns.
     """
     env = dict(os.environ)
     env["PATH"] = str(Path(sys.executable).parent) + os.pathsep + env.get("PATH", "")
