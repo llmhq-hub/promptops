@@ -80,9 +80,9 @@ def _install_hooks(repo: Path) -> None:
 def _commit(repo: Path, message: str) -> subprocess.CompletedProcess:
     """Commit with the installed hooks actually running.
 
-    PATH decides which interpreter runs a ``#!/usr/bin/env python3`` script,
-    so this interpreter's directory goes first or the hook imports some other
-    install and the test proves nothing.
+    Since 0.6.1 the hook is bound to the interpreter that installed it (this
+    one), so PATH no longer decides. The pin stays as belt and braces for
+    anything the hook spawns.
     """
     env = dict(os.environ)
     env["PATH"] = str(Path(sys.executable).parent) + os.pathsep + env.get("PATH", "")

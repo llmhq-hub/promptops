@@ -12,11 +12,13 @@ implementations of one question drift. Both now call
 
 **Doctor could not tell.** ``promptops doctor`` reported "PromptOps hooks
 installed" for six releases while the hooks were dead, because it checked that
-the *files* existed and never that they could run. The hook scripts begin
-``#!/usr/bin/env python3``, so a hook installed under an interpreter that has
-no PromptOps on its path fails on every commit while doctor calls it healthy.
-That is a real and common setup: install PromptOps in a venv, install the
-hooks, then commit from a shell where the venv is not active.
+the *files* existed and never that they could run. Through v0.6.0 the hook scripts
+began ``#!/usr/bin/env python3``, so a hook installed under an interpreter
+that had no PromptOps on its path failed on every commit while doctor called
+it healthy. That was a real and common setup: install PromptOps in a venv,
+install the hooks, then commit from a shell where the venv is not active.
+Since 0.6.1 the shebang is the installing interpreter itself; the check stays
+for hooks whose interpreter has since been removed or rebuilt.
 
 A green check that cannot go red is the same failure as a test that cannot
 fail, and this release exists because of a whole family of those.

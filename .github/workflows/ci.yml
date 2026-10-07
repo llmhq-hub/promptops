@@ -1,0 +1,74 @@
+# Runs the suite at the declared minimum dependency versions AND at the
+# latest, on the oldest and newest supported Python, then audits the resolved
+# set for known vulnerabilities.
+#
+# The floors leg exists because nothing ever installed them before 0.6.1 and
+# the declared combination turned out to be broken while the suite stayed
+# green at latest. scripts/floor_constraints.py derives the floor set from
+# pyproject.toml so there is one source of truth.
+#
+# Actions are pinned by commit SHA (Dependabot keeps the version comments
+# current), so a moved tag cannot change what runs here.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (py${{ matrix.python }}, deps=${{ matrix.deps }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.13"]
+        deps: [floors, latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install at the declared minimum versions
+        if: matrix.deps == 'floors'
+        run: |
+          python -m pip install --upgrade pip
+          python scripts/floor_constraints.py > floors.txt
+          echo "::group::floors"; cat floors.txt; echo "::endgroup::"
+          python -m pip install -c floors.txt -e .
+
+      - name: Install at the latest versions
+        if: matrix.deps == 'latest'
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Record the package's resolved dependency closure
+        # Taken before the test tooling goes in, so this is exactly what a
+        # user who installs llmhq-promptops gets, and nothing more.
+        run: |
+          python -m pip freeze --exclude-editable > resolved-deps.txt
+          echo "::group::resolved dependency closure"; cat resolved-deps.txt; echo "::endgroup::"
+
+      - name: Install test tooling
+        run: |
+          python -m pip install pytest pip-audit
+          python -m pip list
+
+      - name: Test
+        run: python -m pytest tests/ -q
+
+      - name: Audit the package's dependency closure
+        # Scoped to resolved-deps.txt on purpose. Auditing the whole
+        # environment also audits pytest, pip-audit and whatever the runner
+        # image preinstalled (setuptools 79 on the 3.10 image carried
+        # PYSEC-2026-3447), none of which ships to users. --no-deps because
+        # the file is already a fully pinned resolution.
+        run: pip-audit -r resolved-deps.txt --no-deps

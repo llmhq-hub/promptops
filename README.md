@@ -273,6 +273,11 @@ The bump rewrites the version line and nothing else, so comments and
 `template: |` formatting survive. `promptops doctor` verifies the hooks can
 actually run, not merely that they are installed.
 
+The installed hook is bound to the Python interpreter that ran
+`promptops hooks install` and imports PromptOps from there only, never from
+the repository itself. If you rebuild that virtualenv, re-run
+`promptops hooks install`; `doctor` will tell you until you do.
+
 Zero manual version management.
 
 ## 🌟 Version References

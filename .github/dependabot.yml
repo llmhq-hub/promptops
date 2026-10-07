@@ -1,0 +1,22 @@
+# pip: pyproject.toml declares floors, not pins, so routine version updates
+# have nothing to bump. Security updates do: an advisory inside a floor's
+# range opens a PR that raises the floor, and the CI "floors" leg decides
+# whether the suite still passes there.
+#
+# github-actions: keeps the SHA pins in .github/workflows current. The copy-in
+# template under examples/github-actions/ is outside Dependabot's reach and
+# is pinned by hand.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: /examples/docker-snapshot
+    schedule:
+      interval: weekly
