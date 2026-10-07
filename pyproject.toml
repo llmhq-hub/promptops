@@ -1,5 +1,7 @@
 [build-system]
-requires = ["setuptools>=42", "wheel"]
+# >=61.0 is the first setuptools that understands the [project] table below;
+# the previous ">=42" floor could not have built this package.
+requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -42,12 +44,21 @@ classifiers = [
   "Topic :: System :: Logging",
   "Typing :: Typed"
 ]
+# Floors, not pins. Each one is the lowest release with no known advisory
+# (checked against OSV directly, not only pip-audit) that the suite passes
+# at; CI runs the tests at exactly these versions and at the latest.
+# scripts/floor_constraints.py derives the floor set from this list.
+#
+# click 8.3.3 closes PYSEC-2026-2132. typer 0.18.0 is the first release that
+# keeps typer.Option(...) required with click >= 8.3; earlier ones silently
+# pass None. GitPython 3.1.62 closes 28 PYSEC advisories plus CVE-2026-100689,
+# several reachable through Repo() on a crafted repository.
 dependencies = [
-  "click>=8.1.8",
+  "click>=8.3.3",
   "Jinja2>=3.1.6",
   "PyYAML>=6.0.2",
-  "typer>=0.15.2",
-  "GitPython>=3.1.41"
+  "typer>=0.18.0",
+  "GitPython>=3.1.62"
 ]
 
 [project.urls]
