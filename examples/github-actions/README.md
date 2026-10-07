@@ -113,7 +113,7 @@ problems before pushing:
 ```yaml
 repos:
   - repo: https://github.com/llmhq-hub/promptops
-    rev: v0.6.0
+    rev: v0.6.1
     hooks:
       - id: promptops-doctor
       - id: promptops-snapshot-build

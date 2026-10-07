@@ -5,6 +5,83 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-10-07
+
+A security and dependency release. No API changes. Two things to do after
+upgrading: re-run `promptops hooks install` in every repository that has the
+hooks installed (see Security), and re-resolve your dependencies so GitPython
+lands at 3.1.62 or later. `promptops doctor` fails a hook that still needs
+the first of those, so it will tell you.
+
+### Security
+
+- **The installed git hooks could import code from the repository being
+  committed to.** The script `promptops hooks install` wrote into
+  `.git/hooks/` began `#!/usr/bin/env python3`, and when that interpreter
+  could not import `llmhq_promptops` it pushed `<repo>/src`, `<repo>/../src`
+  and `$PWD/src` onto `sys.path` and imported whatever `llmhq_promptops`
+  package it found there. Anyone who could land
+  `src/llmhq_promptops/__init__.py` in a shared repository got code execution
+  on the next commit by any developer whose venv was not active, which is the
+  common case (CWE-427). Reproduced independently during the audit. The hook
+  is now bound to the interpreter that installed it (the shebang is that
+  interpreter's absolute path) and imports PromptOps from there and nowhere
+  else. When it cannot, it names the interpreter, prints the fix, and blocks
+  the commit. **Re-run `promptops hooks install` from the environment you
+  commit from.** `promptops doctor` reports FAIL for a hook written by an
+  earlier release until you do.
+- **Dependency floors raised past every known advisory.** `GitPython>=3.1.62`
+  (was 3.1.41; releases 3.1.41 through 3.1.61 carry 28 PYSEC advisories plus
+  CVE-2026-100689, several of them reachable through `Repo()` on a crafted
+  repository, which PromptOps calls on every git-mode operation).
+  `click>=8.3.3` (was 8.1.8; PYSEC-2026-2132 in `click.edit()`, which
+  PromptOps never calls, closed anyway since it costs nothing). Every floor
+  was checked against OSV directly: pip-audit's feed did not have the
+  GitPython CVE, and 3.1.60 would otherwise have looked safe. Jinja2 and
+  PyYAML floors are unchanged; both are advisory-free and raising them would
+  only restrict users.
+
+### Fixed
+
+- `typer>=0.18.0` (was 0.15.2). typer 0.17 and earlier combined with click
+  8.3 or later silently pass `None` for `typer.Option(...)` required options,
+  so `promptops blame` without `--at` and `promptops deploy event` without
+  `--env` crashed with `AttributeError: 'NoneType' object has no attribute
+  'strip'` instead of printing a usage error. Found by running the suite at
+  the declared floors, which nothing had ever done. Bisected: 0.17.0 fails,
+  0.18.0 and every later release passes.
+- The hook's "installation not found" message raised `NameError` on an
+  undefined `cwd` before it reached the recovery steps, so the user saw a
+  traceback and never the fix. The commit was still blocked; only the
+  explanation was lost.
+- `build-system` now declares `setuptools>=61.0`, the first release that
+  understands the `[project]` table this file uses. The old `>=42` floor
+  could not have built the package.
+
+### Changed
+
+- Hooks are bound to the interpreter that installed them. If you delete and
+  rebuild that virtualenv, re-run `promptops hooks install`; until then
+  `promptops doctor` reports a hook whose interpreter cannot import
+  PromptOps. This is how the pre-commit framework already behaves.
+
+### Added
+
+- CI (`.github/workflows/ci.yml`): on every pull request the suite runs at
+  the declared minimum dependency versions and at the latest, on Python 3.10
+  and 3.13, then `pip-audit` checks what resolved. `scripts/floor_constraints.py`
+  derives the floor set from `pyproject.toml` so the two cannot drift.
+- Dependabot for pip (security updates raise floors), GitHub Actions (keeps
+  the SHA pins current) and the example Docker base image.
+- `examples/github-actions/promptops-diff.yml` pins its actions by commit
+  SHA with the release noted alongside.
+- `examples/docker-snapshot/Dockerfile` runs as an unprivileged user.
+- 13 tests pinning the hook contract: the shebang is the installing
+  interpreter, the script never searches the repository, a planted
+  `src/llmhq_promptops` is never imported (the reproduced exploit, as a
+  regression test), the not-found path prints the fix, and `doctor` fails a
+  pre-0.6.1 hook. Suite: 541 to 554.
+
 ## [0.6.0] - 2026-08-02
 
 A repair release. The git hooks, the feature this project leads with, have not
