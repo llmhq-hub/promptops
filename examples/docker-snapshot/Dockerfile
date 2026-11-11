@@ -7,7 +7,7 @@
 # Build from this directory after running ./build.sh, which produces the
 # snapshot from a real git repo.
 
-FROM python:3.11-slim
+FROM python:3.15-slim
 
 WORKDIR /app
 
